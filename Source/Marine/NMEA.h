@@ -123,7 +123,7 @@ namespace AIS
 		bool isCompleteNMEA(const std::string &s, bool newline);
 
 	public:
-		NMEA() : parser(JSON_DICT_FULL)
+		NMEA() : parser(JSON_DICT_INPUT)
 		{
 			parser.setSkipUnknown(true);
 		}

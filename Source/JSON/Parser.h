@@ -130,13 +130,14 @@ namespace JSON
 		std::shared_ptr<JSON> parse_core();
 		void parse_into_core(JSON *o);
 		Value parse_value(JSON *);
+		void skip_value();
 
-		static KeyHashTable keyLookups[5];
+		static KeyHashTable keyLookups[JSON_DICT_COLUMNS];
 
 	public:
 		static void buildKeyLookup(int dict)
 		{
-			if (dict < 0 || dict >= 5 || keyLookups[dict].built)
+			if (dict < 0 || dict >= JSON_DICT_COLUMNS || keyLookups[dict].built)
 				return;
 
 			for (int i = 0; i < AIS::KEY_COUNT; i++)

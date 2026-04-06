@@ -332,10 +332,10 @@ public:
 
 	bool isPortSet() { return port_set; }
 	// HTTP callbacks
-	void Request(IO::TCPServerConnection &c, const std::string &r, bool gzip);
+	void Request(IO::TCPServerConnection &c, const std::string &r, bool gzip) override;
 
 	Setting &SetKey(AIS::Keys key, const std::string &arg) override;
-	std::string Get() { return ""; }
+	std::string Get() override { return ""; }
 
 	const std::vector<AIS::Keys> &getAcceptedKeys() const override
 	{

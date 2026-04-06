@@ -23,7 +23,7 @@
 
 namespace JSON
 {
-	KeyHashTable Parser::keyLookups[5];
+	KeyHashTable Parser::keyLookups[JSON_DICT_COLUMNS];
 
 	// Parser -- Build JSON object from String
 
@@ -285,6 +285,57 @@ namespace JSON
 		return keyLookups[dict].find(h);
 	}
 
+	void Parser::skip_value()
+	{
+		switch (currentType)
+		{
+		case TokenType::LeftBrace:
+		{
+			// skip nested object
+			next();
+			while (is_match(TokenType::String))
+			{
+				next(); // key
+				must_match(TokenType::Colon, "expected ':'");
+				next();
+				skip_value();
+				next();
+				if (!is_match(TokenType::Comma))
+					break;
+				next();
+			}
+			must_match(TokenType::RightBrace, "expected '}'");
+			break;
+		}
+		case TokenType::LeftBracket:
+		{
+			// skip array
+			next();
+			while (!is_match(TokenType::RightBracket))
+			{
+				skip_value();
+				next();
+				if (!is_match(TokenType::Comma))
+					break;
+				next();
+			}
+			must_match(TokenType::RightBracket, "expected ']'");
+			break;
+		}
+		// all scalar types: already consumed by next()
+		case TokenType::String:
+		case TokenType::Integer:
+		case TokenType::FloatingPoint:
+		case TokenType::True:
+		case TokenType::False:
+		case TokenType::Null:
+			break;
+		default:
+			error_parser("unexpected token while skipping value");
+			break;
+		}
+	}
+
 	Value Parser::parse_value(JSON *o)
 	{
 		Value v = Value();
@@ -355,17 +406,18 @@ namespace JSON
 		while (is_match(TokenType::String))
 		{
 			int p = search();
-			if (p < 0)
-			{
-				if (!skipUnknownKeys)
-					error_parser("\"" + tokenString() + "\" is not an allowed \"key\"");
-			}
-			next();
+			if (p < 0 && !skipUnknownKeys)
+				error_parser("\"" + tokenString() + "\" is not an allowed \"key\"");
 
+			next();
 			must_match(TokenType::Colon, "expected \':\'");
 			next();
 
-			o->Add(p, parse_value(o.get()));
+			if (p < 0)
+				skip_value();
+			else
+				o->Add(p, parse_value(o.get()));
+
 			next();
 
 			if (!is_match(TokenType::Comma))
@@ -387,17 +439,18 @@ namespace JSON
 		while (is_match(TokenType::String))
 		{
 			int p = search();
-			if (p < 0)
-			{
-				if (!skipUnknownKeys)
-					error_parser("\"" + tokenString() + "\" is not an allowed \"key\"");
-			}
-			next();
+			if (p < 0 && !skipUnknownKeys)
+				error_parser("\"" + tokenString() + "\" is not an allowed \"key\"");
 
+			next();
 			must_match(TokenType::Colon, "expected \':\'");
 			next();
 
-			o->Add(p, parse_value(o));
+			if (p < 0)
+				skip_value();
+			else
+				o->Add(p, parse_value(o));
+
 			next();
 
 			if (!is_match(TokenType::Comma))

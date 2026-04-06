@@ -25,6 +25,7 @@
 #define JSON_DICT_SPARSE 2
 #define JSON_DICT_APRS 3
 #define JSON_DICT_SETTING 4
+#define JSON_DICT_INPUT 5
 #define JSON_DICT_COLUMNS 6
 
 namespace AIS
@@ -57,7 +58,7 @@ namespace AIS
 	// JSON keys - generated from KeyDefs.h
 	enum Keys
 	{
-#define X(name, full, min, sparse, aprs, setting, unit, desc, lookup) name,
+#define X(name, full, min, sparse, aprs, setting, unit, desc, lookup, input) name,
 #include "KeyDefs.h"
 #undef X
 		KEY_COUNT
