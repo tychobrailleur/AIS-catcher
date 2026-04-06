@@ -60,7 +60,8 @@ namespace JSON
 		bool skipUnknownKeys = false;
 
 		std::string json;
-		int ptr = 0;
+		const char *p = nullptr;
+		const char *pend = nullptr;
 
 		enum class TokenType
 		{
@@ -80,8 +81,8 @@ namespace JSON
 		};
 
 		TokenType currentType = TokenType::End;
-		int tokenStart = 0;
-		int tokenEnd = 0;
+		const char *tokenStart = nullptr;
+		const char *tokenEnd = nullptr;
 		bool tokenEscaped = false;
 		std::string escapedText;
 
@@ -133,9 +134,8 @@ namespace JSON
 
 		int linearSearch() const
 		{
-			int len = tokenEnd - tokenStart;
-			const char *str = tokenEscaped ? escapedText.data() : json.data() + tokenStart;
-			int slen = tokenEscaped ? (int)escapedText.size() : len;
+			const char *str = tokenEscaped ? escapedText.data() : tokenStart;
+			int slen = tokenEscaped ? (int)escapedText.size() : (int)(tokenEnd - tokenStart);
 
 			for (int i = 0; i < AIS::KEY_COUNT; i++)
 			{

@@ -16,6 +16,7 @@
 */
 
 #include <string>
+#include <cstring>
 #include <cmath>
 
 #include "Parser.h"
@@ -30,8 +31,9 @@ namespace JSON
 	void Parser::error(const std::string &err, int pos)
 	{
 		const int char_limit = 40;
+		int sz = (int)(pend - json.data());
 		int from = MAX(pos - char_limit, 0);
-		int to = MIN(pos + char_limit, json.size());
+		int to = MIN(pos + char_limit, sz);
 
 		std::stringstream ss;
 		for (int i = from; i < to; i++)
@@ -46,103 +48,148 @@ namespace JSON
 		throw std::runtime_error("syntax error in JSON: " + err);
 	}
 
+	// 64-bit scanning helpers
+
+	// Detect if any byte in a 64-bit word equals the target byte
+	static inline uint64_t has_byte(uint64_t word, char target)
+	{
+		uint64_t mask = 0x0101010101010101ULL * (unsigned char)target;
+		uint64_t v = word ^ mask;
+		return (v - 0x0101010101010101ULL) & ~v & 0x8080808080808080ULL;
+	}
+
+
+	// Count trailing zeros to find first flagged byte position
+	static inline int first_byte_pos(uint64_t mask)
+	{
+#if defined(__GNUC__) || defined(__clang__)
+		return __builtin_ctzll(mask) >> 3;
+#elif defined(_MSC_VER)
+		unsigned long idx;
+		_BitScanForward64(&idx, mask);
+		return (int)(idx >> 3);
+#else
+		// portable fallback
+		int n = 0;
+		while (!(mask & 0xFF))
+		{
+			mask >>= 8;
+			n++;
+		}
+		return n;
+#endif
+	}
+
 	// JIT Tokenizer - lexes one token per call
 
 	void Parser::skip_whitespace()
 	{
-		while (ptr < (int)json.size() && std::isspace(json[ptr]))
-			ptr++;
+		while (p < pend && (unsigned char)*p <= ' ' && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'))
+			p++;
 	}
 
 	void Parser::next()
 	{
 		skip_whitespace();
 
-		if (ptr >= (int)json.size())
+		if (p >= pend)
 		{
 			currentType = TokenType::End;
-			tokenStart = tokenEnd = ptr;
+			tokenStart = tokenEnd = p;
 			return;
 		}
 
-		char c = json[ptr];
+		char c = *p;
 
 		// number
-		if (std::isdigit(c) || c == '-')
+		if ((unsigned char)(c - '0') < 10 || c == '-')
 		{
 			bool floating = false;
 			bool scientific = false;
-			tokenStart = ptr;
+			tokenStart = p;
 
 			do
 			{
-				if (json[ptr] == '.')
+				if (*p == '.')
 				{
-					if (floating || tokenStart == ptr || !std::isdigit(json[ptr - 1]))
-						error("malformed number", ptr);
+					if (floating || tokenStart == p || (unsigned char)(p[-1] - '0') >= 10)
+						error("malformed number", (int)(p - json.data()));
 					else
 						floating = true;
 				}
-				else if ((json[ptr] == 'e' || json[ptr] == 'E') && !scientific)
+				else if ((*p == 'e' || *p == 'E') && !scientific)
 				{
-					if (!std::isdigit(json[ptr - 1]) && json[ptr - 1] != '.')
-						error("malformed number", ptr);
+					if ((unsigned char)(p[-1] - '0') >= 10 && p[-1] != '.')
+						error("malformed number", (int)(p - json.data()));
 
 					scientific = floating = true;
-					ptr++;
-					if (ptr != (int)json.size() && (json[ptr] == '+' || json[ptr] == '-'))
-						ptr++;
+					p++;
+					if (p != pend && (*p == '+' || *p == '-'))
+						p++;
 
-					if (ptr == (int)json.size() || !std::isdigit(json[ptr]))
-						error("malformed number", ptr);
+					if (p == pend || (unsigned char)(*p - '0') >= 10)
+						error("malformed number", (int)(p - json.data()));
 				}
 
-				ptr++;
+				p++;
 
-			} while (ptr != (int)json.size() && (std::isdigit(json[ptr]) || json[ptr] == '.' || json[ptr] == 'e' || json[ptr] == 'E'));
+			} while (p != pend && ((unsigned char)(*p - '0') < 10 || *p == '.' || *p == 'e' || *p == 'E'));
 
-			tokenEnd = ptr;
+			tokenEnd = p;
 			currentType = floating ? TokenType::FloatingPoint : TokenType::Integer;
 		}
 		// string
 		else if (c == '\"')
 		{
-			ptr++;
-			tokenStart = ptr;
+			p++;
+			tokenStart = p;
 			tokenEscaped = false;
 
-			while (ptr != (int)json.size() && json[ptr] != '\"' && json[ptr] != '\n' && json[ptr] != '\r')
+			// 64-bit fast scan: find " or \ or control char
+			while (p + 8 <= pend)
 			{
-				if (json[ptr] == '\\')
+				uint64_t chunk;
+				memcpy(&chunk, p, 8);
+
+				uint64_t special = has_byte(chunk, '"') | has_byte(chunk, '\\') | has_byte(chunk, '\n') | has_byte(chunk, '\r');
+				if (special)
 				{
-					tokenEscaped = true;
-					break;
+					p += first_byte_pos(special);
+					goto found_special;
 				}
-				ptr++;
+				p += 8;
 			}
+
+			// tail bytes
+			while (p < pend && *p != '\"' && *p != '\\' && *p != '\n' && *p != '\r')
+				p++;
+
+		found_special:
+			if (p < pend && *p == '\\')
+				tokenEscaped = true;
 
 			if (!tokenEscaped)
 			{
 				// fast path - no escapes, just record position
-				tokenEnd = ptr;
-				if ((int)json.size() == ptr || json[ptr] != '\"')
-					error("line ends in string literal", ptr);
-				ptr++;
+				tokenEnd = p;
+				if (p == pend || *p != '\"')
+					error("line ends in string literal", (int)(p - json.data()));
+				p++;
 			}
 			else
 			{
 				// slow path - build escaped string
 				escapedText.clear();
-				escapedText.append(json, tokenStart, ptr - tokenStart);
+				escapedText.append(tokenStart, p - tokenStart);
 
-				while (ptr != (int)json.size() && json[ptr] != '\"' && json[ptr] != '\n' && json[ptr] != '\r')
+				while (p != pend && *p != '\"' && *p != '\n' && *p != '\r')
 				{
-					char ch = json[ptr];
+					char ch = *p;
 					if (ch == '\\')
 					{
-						if (++ptr == (int)json.size())
-							error("line ends in string literal escape sequence", ptr);
-						ch = json[ptr];
+						if (++p == pend)
+							error("line ends in string literal escape sequence", (int)(p - json.data()));
+						ch = *p;
 						switch (ch)
 						{
 						case '\"':
@@ -168,53 +215,53 @@ namespace JSON
 							break;
 						case 'u':
 						{
-							if (ptr + 4 >= (int)json.size())
-								error("line ends in string literal unicode escape sequence", ptr);
-							std::string hex = json.substr(ptr + 1, 4);
+							if (p + 4 >= pend)
+								error("line ends in string literal unicode escape sequence", (int)(p - json.data()));
+							std::string hex(p + 1, 4);
 							for (int i = 0; i < 4; i++)
 								if (!std::isxdigit(hex[i]))
-									error("illegal unicode escape sequence", ptr);
+									error("illegal unicode escape sequence", (int)(p - json.data()));
 							ch = std::stoi(hex, nullptr, 16);
-							ptr += 4;
+							p += 4;
 							break;
 						}
 						default:
-							error("illegal escape sequence " + std::to_string((int)(ch)), ptr);
+							error("illegal escape sequence " + std::to_string((int)(ch)), (int)(p - json.data()));
 						}
 					}
 					escapedText += ch;
-					ptr++;
+					p++;
 				}
 
-				tokenStart = 0;
-				tokenEnd = 0;
+				tokenStart = nullptr;
+				tokenEnd = nullptr;
 
-				if ((int)json.size() == ptr || json[ptr] != '\"')
-					error("line ends in string literal", ptr);
-				ptr++;
+				if (p == pend || *p != '\"')
+					error("line ends in string literal", (int)(p - json.data()));
+				p++;
 			}
 
 			currentType = TokenType::String;
 		}
 		// keyword
-		else if (isalpha(c))
+		else if ((unsigned char)(c | 0x20) >= 'a' && (unsigned char)(c | 0x20) <= 'z')
 		{
-			tokenStart = ptr;
+			tokenStart = p;
 
-			while (ptr != (int)json.size() && isalpha(json[ptr]))
-				ptr++;
+			while (p != pend && (unsigned char)(*p | 0x20) >= 'a' && (unsigned char)(*p | 0x20) <= 'z')
+				p++;
 
-			tokenEnd = ptr;
-			int len = tokenEnd - tokenStart;
+			tokenEnd = p;
+			int len = (int)(tokenEnd - tokenStart);
 
-			if (len == 4 && json[tokenStart] == 't' && json[tokenStart + 1] == 'r' && json[tokenStart + 2] == 'u' && json[tokenStart + 3] == 'e')
+			if (len == 4 && memcmp(tokenStart, "true", 4) == 0)
 				currentType = TokenType::True;
-			else if (len == 5 && json[tokenStart] == 'f' && json[tokenStart + 1] == 'a' && json[tokenStart + 2] == 'l' && json[tokenStart + 3] == 's' && json[tokenStart + 4] == 'e')
+			else if (len == 5 && memcmp(tokenStart, "false", 5) == 0)
 				currentType = TokenType::False;
-			else if (len == 4 && json[tokenStart] == 'n' && json[tokenStart + 1] == 'u' && json[tokenStart + 2] == 'l' && json[tokenStart + 3] == 'l')
+			else if (len == 4 && memcmp(tokenStart, "null", 4) == 0)
 				currentType = TokenType::Null;
 			else
-				error("illegal identifier : \"" + std::string(json, tokenStart, len) + "\"", ptr);
+				error("illegal identifier : \"" + std::string(tokenStart, len) + "\"", (int)(p - json.data()));
 		}
 		// special characters
 		else
@@ -240,12 +287,12 @@ namespace JSON
 				currentType = TokenType::Comma;
 				break;
 			default:
-				error("illegal character '" + std::string(1, c) + "'", ptr);
+				error("illegal character '" + std::string(1, c) + "'", (int)(p - json.data()));
 				break;
 			}
-			tokenStart = ptr;
-			tokenEnd = ptr;
-			ptr++;
+			tokenStart = p;
+			tokenEnd = p;
+			p++;
 		}
 	}
 
@@ -253,7 +300,7 @@ namespace JSON
 
 	void Parser::error_parser(const std::string &err)
 	{
-		error(err, tokenStart);
+		error(err, (int)(tokenStart - json.data()));
 	}
 
 	bool Parser::is_match(TokenType t)
@@ -271,15 +318,15 @@ namespace JSON
 	{
 		if (tokenEscaped)
 			return escapedText;
-		return std::string(json, tokenStart, tokenEnd - tokenStart);
+		return std::string(tokenStart, tokenEnd - tokenStart);
 	}
 
 	int Parser::search()
 	{
 		if (dict == JSON_DICT_INPUT)
 		{
-			const char *str = tokenEscaped ? escapedText.data() : json.data() + tokenStart;
-			int len = tokenEscaped ? (int)escapedText.size() : tokenEnd - tokenStart;
+			const char *str = tokenEscaped ? escapedText.data() : tokenStart;
+			int len = tokenEscaped ? (int)escapedText.size() : (int)(tokenEnd - tokenStart);
 
 			return keyLookup.find(hashRange(str, len), str, len);
 		}
@@ -345,10 +392,10 @@ namespace JSON
 		switch (currentType)
 		{
 		case TokenType::Integer:
-			v.setInt(Util::Parse::Integer(std::string(json, tokenStart, tokenEnd - tokenStart)));
+			v.setInt(Util::Parse::Integer(std::string(tokenStart, tokenEnd - tokenStart)));
 			break;
 		case TokenType::FloatingPoint:
-			v.setFloat(Util::Parse::Float(std::string(json, tokenStart, tokenEnd - tokenStart)));
+			v.setFloat(Util::Parse::Float(std::string(tokenStart, tokenEnd - tokenStart)));
 			break;
 		case TokenType::True:
 			v.setBool(true);
@@ -407,18 +454,18 @@ namespace JSON
 
 		while (is_match(TokenType::String))
 		{
-			int p = search();
-			if (p < 0 && !skipUnknownKeys)
+			int idx = search();
+			if (idx < 0 && !skipUnknownKeys)
 				error_parser("\"" + tokenString() + "\" is not an allowed \"key\"");
 
 			next();
 			must_match(TokenType::Colon, "expected \':\'");
 			next();
 
-			if (p < 0)
+			if (idx < 0)
 				skip_value();
 			else
-				o->Add(p, parse_value(o.get()));
+				o->Add(idx, parse_value(o.get()));
 
 			next();
 
@@ -440,18 +487,18 @@ namespace JSON
 
 		while (is_match(TokenType::String))
 		{
-			int p = search();
-			if (p < 0 && !skipUnknownKeys)
+			int idx = search();
+			if (idx < 0 && !skipUnknownKeys)
 				error_parser("\"" + tokenString() + "\" is not an allowed \"key\"");
 
 			next();
 			must_match(TokenType::Colon, "expected \':\'");
 			next();
 
-			if (p < 0)
+			if (idx < 0)
 				skip_value();
 			else
-				o->Add(p, parse_value(o));
+				o->Add(idx, parse_value(o));
 
 			next();
 
@@ -468,7 +515,8 @@ namespace JSON
 	std::shared_ptr<JSON> Parser::parse(const std::string &j)
 	{
 		json = j;
-		ptr = 0;
+		p = json.data();
+		pend = p + json.size();
 		next();
 		auto result = parse_core();
 		next();
@@ -480,7 +528,8 @@ namespace JSON
 	void Parser::parse_into(JSON &target, const std::string &j)
 	{
 		json = j;
-		ptr = 0;
+		p = json.data();
+		pend = p + json.size();
 		target.clear();
 		next();
 		parse_into_core(&target);
