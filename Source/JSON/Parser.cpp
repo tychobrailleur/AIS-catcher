@@ -19,8 +19,9 @@
 #include <cstring>
 #include <cmath>
 
+#include <cstdlib>
+
 #include "Parser.h"
-#include "Parse.h"
 
 namespace JSON
 {
@@ -392,10 +393,16 @@ namespace JSON
 		switch (currentType)
 		{
 		case TokenType::Integer:
-			v.setInt(Util::Parse::Integer(std::string(tokenStart, tokenEnd - tokenStart)));
+		{
+			long val = 0;
+			bool neg = (*tokenStart == '-');
+			for (const char *s = tokenStart + neg; s < tokenEnd; s++)
+				val = val * 10 + (*s - '0');
+			v.setInt(neg ? -val : val);
 			break;
+		}
 		case TokenType::FloatingPoint:
-			v.setFloat(Util::Parse::Float(std::string(tokenStart, tokenEnd - tokenStart)));
+			v.setFloat(strtod(tokenStart, nullptr));
 			break;
 		case TokenType::True:
 			v.setBool(true);
