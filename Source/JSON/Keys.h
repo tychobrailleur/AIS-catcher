@@ -58,7 +58,7 @@ namespace AIS
 	// JSON keys - generated from KeyDefs.h
 	enum Keys
 	{
-#define X(name, full, min, sparse, aprs, setting, unit, desc, lookup, input) name,
+#define X(name, full, min, sparse, aprs, setting, input, unit, desc, lookup) name,
 #include "KeyDefs.h"
 #undef X
 		KEY_COUNT

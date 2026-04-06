@@ -24,7 +24,7 @@ namespace AIS
 {
 	// Generated from KeyDefs.h
 	const char* const KeyMap[][JSON_DICT_COLUMNS] = {
-#define X(name, full, minimal, sparse, aprs, setting, unit, desc, lookup, input) {full, minimal, sparse, aprs, setting, input},
+#define X(name, full, minimal, sparse, aprs, setting, input, unit, desc, lookup) {full, minimal, sparse, aprs, setting, input},
 #include "KeyDefs.h"
 #undef X
 	};
@@ -308,7 +308,7 @@ namespace AIS
 
 	// Generated from KeyDefs.h
 	const KeyInfo KeyInfoMap[] = {
-#define X(name, full, minimal, sparse, aprs, setting, unit, desc, lookup, input) {unit, desc, lookup},
+#define X(name, full, minimal, sparse, aprs, setting, input, unit, desc, lookup) {unit, desc, lookup},
 #include "KeyDefs.h"
 #undef X
 	};
