@@ -23,7 +23,7 @@
 
 namespace JSON
 {
-	KeyHashTable Parser::keyLookups[JSON_DICT_COLUMNS];
+	KeyHashTable Parser::keyLookup;
 
 	// Parser -- Build JSON object from String
 
@@ -276,13 +276,15 @@ namespace JSON
 
 	int Parser::search()
 	{
-		size_t h;
-		if (tokenEscaped)
-			h = hashRange(escapedText.data(), escapedText.size());
-		else
-			h = hashRange(json.data() + tokenStart, tokenEnd - tokenStart);
+		if (dict == JSON_DICT_INPUT)
+		{
+			const char *str = tokenEscaped ? escapedText.data() : json.data() + tokenStart;
+			int len = tokenEscaped ? (int)escapedText.size() : tokenEnd - tokenStart;
 
-		return keyLookups[dict].find(h);
+			return keyLookup.find(hashRange(str, len), str, len);
+		}
+
+		return linearSearch();
 	}
 
 	void Parser::skip_value()

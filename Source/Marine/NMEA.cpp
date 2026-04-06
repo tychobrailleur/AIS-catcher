@@ -522,6 +522,7 @@ namespace AIS
 						dev = p.Get().getString();
 						break;
 					case AIS::KEY_SIGNAL_POWER:
+					case AIS::KEY_DBM:
 						tag.level = p.Get().getFloat(LEVEL_UNDEFINED);
 						break;
 					case AIS::KEY_PPM:

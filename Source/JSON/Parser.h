@@ -21,57 +21,35 @@
 #include <iostream>
 #include <memory>
 #include <cstring>
+#include <cstdint>
 
 #include "JSON.h"
 #include "Keys.h"
 
 namespace JSON
 {
-	// Open-addressing hash table for key lookup: no heap allocation, no pointer chasing.
-	// Power-of-2 sized, linear probing. Built once per dict, shared across all Parsers.
+	// Direct-mapped hash table for INPUT key lookup.
+	// 71 slots chosen so FNV-1a hash % 71 gives zero collisions for the 18 input keys.
 	struct KeyHashTable
 	{
-		static const int CAPACITY = 1024; // must be power of 2
-		static const int MASK = CAPACITY - 1;
+		static const int SIZE = 71;
+		int16_t slots[SIZE]; // Keys enum value, or -1 if empty
+		bool built = false;
 
-		struct Slot
+		void insert(uint32_t h, int value)
 		{
-			size_t hash;
-			int value; // Keys enum value, or -1 if empty
-		};
-
-		Slot slots[CAPACITY];
-		bool built;
-
-		KeyHashTable() : built(false)
-		{
-			for (int i = 0; i < CAPACITY; i++)
-				slots[i].value = -1;
+			int idx = (int)(h % SIZE);
+			if (slots[idx] != -1)
+				throw std::runtime_error("JSON Parser: hash collision in key lookup table");
+			slots[idx] = (int16_t)value;
 		}
 
-		void insert(size_t h, int value)
+		int find(uint32_t h, const char *str, int len) const
 		{
-			int idx = (int)(h & MASK);
-			while (slots[idx].value != -1)
-			{
-				if (slots[idx].hash == h)
-					throw std::runtime_error("JSON Parser: hash collision in key lookup");
-				idx = (idx + 1) & MASK;
-			}
-			slots[idx].hash = h;
-			slots[idx].value = value;
-		}
-
-		int find(size_t h) const
-		{
-			int idx = (int)(h & MASK);
-			while (slots[idx].value != -1)
-			{
-				if (slots[idx].hash == h)
-					return slots[idx].value;
-				idx = (idx + 1) & MASK;
-			}
-			return -1;
+			int v = slots[(int)(h % SIZE)];
+			if (v >= 0 && ((int)strlen(AIS::KeyMap[v][JSON_DICT_INPUT]) != len || memcmp(AIS::KeyMap[v][JSON_DICT_INPUT], str, len) != 0))
+				return -1;
+			return v;
 		}
 	};
 
@@ -107,9 +85,9 @@ namespace JSON
 		bool tokenEscaped = false;
 		std::string escapedText;
 
-		static size_t hashRange(const char *data, int len)
+		static uint32_t hashRange(const char *data, int len)
 		{
-			size_t h = 2166136261u;
+			uint32_t h = 2166136261u;
 			for (int i = 0; i < len; i++)
 				h = (h ^ (unsigned char)data[i]) * 16777619u;
 			return h;
@@ -132,25 +110,43 @@ namespace JSON
 		Value parse_value(JSON *);
 		void skip_value();
 
-		static KeyHashTable keyLookups[JSON_DICT_COLUMNS];
+		static KeyHashTable keyLookup; // INPUT only
 
 	public:
-		static void buildKeyLookup(int dict)
+		static void buildKeyLookup()
 		{
-			if (dict < 0 || dict >= JSON_DICT_COLUMNS || keyLookups[dict].built)
+			if (keyLookup.built)
 				return;
 
+			for (int i = 0; i < KeyHashTable::SIZE; i++)
+				keyLookup.slots[i] = -1;
+
 			for (int i = 0; i < AIS::KEY_COUNT; i++)
-				if (AIS::KeyMap[i][dict][0] != '\0')
+				if (AIS::KeyMap[i][JSON_DICT_INPUT][0] != '\0')
 				{
-					const char* key = AIS::KeyMap[i][dict];
-					keyLookups[dict].insert(hashRange(key, strlen(key)), i);
+					const char *key = AIS::KeyMap[i][JSON_DICT_INPUT];
+					keyLookup.insert(hashRange(key, strlen(key)), i);
 				}
 
-			keyLookups[dict].built = true;
+			keyLookup.built = true;
 		}
 
-		Parser(int d = JSON_DICT_FULL) : dict(d) { buildKeyLookup(dict); }
+		int linearSearch() const
+		{
+			int len = tokenEnd - tokenStart;
+			const char *str = tokenEscaped ? escapedText.data() : json.data() + tokenStart;
+			int slen = tokenEscaped ? (int)escapedText.size() : len;
+
+			for (int i = 0; i < AIS::KEY_COUNT; i++)
+			{
+				const char *key = AIS::KeyMap[i][dict];
+				if (key[0] != '\0' && (int)strlen(key) == slen && memcmp(key, str, slen) == 0)
+					return i;
+			}
+			return -1;
+		}
+
+		Parser(int d = JSON_DICT_FULL) : dict(d) {}
 
 		std::shared_ptr<JSON> parse(const std::string &j);
 		void parse_into(JSON &target, const std::string &j);
@@ -158,7 +154,6 @@ namespace JSON
 		void setMap(int d)
 		{
 			dict = d;
-			buildKeyLookup(dict);
 		}
 	};
 }

@@ -244,16 +244,6 @@ namespace AIS
 				apf6((double)rxtime / 1000000.0);
 			else
 				api(rxtime / 1000000);
-
-			aps(",\"rxtime\":\"");
-			{
-				std::time_t t = (std::time_t)(rxtime / 1000000);
-				std::tm *now_tm = std::gmtime(&t);
-				char ts[16];
-				std::strftime(ts, 16, "%Y%m%d%H%M%S", now_tm);
-				aps(ts);
-			}
-			ap('"');
 		}
 
 		if (toa != 0)
