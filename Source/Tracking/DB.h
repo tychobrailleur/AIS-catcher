@@ -77,7 +77,7 @@ class DB : public StreamIn<JSON::JSON>,
 	uint32_t own_mmsi = 0;
 
 	int Nships = 4096;
-	int Npaths = 4096 * 16;
+	int Npaths = Nships * 16;
 
 	std::vector<Ship> ships;
 	std::vector<PathPoint> paths;

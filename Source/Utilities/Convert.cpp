@@ -25,17 +25,70 @@ namespace Util
 {
 	std::string Convert::toTimeStr(const std::time_t &t)
 	{
-		std::tm *now_tm = std::gmtime(&t);
+		// Fast UTC breakdown without gmtime/strftime (avoids TZ locks)
+		int64_t s = static_cast<int64_t>(t);
+		int sec = s % 60; s /= 60;
+		int min = s % 60; s /= 60;
+		int hour = s % 24; s /= 24;
+
+		// Days since 1970-01-01 to y/m/d (civil_from_days, Howard Hinnant)
+		int z = static_cast<int>(s) + 719468;
+		int era = (z >= 0 ? z : z - 146096) / 146097;
+		unsigned doe = static_cast<unsigned>(z - era * 146097);
+		unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+		int y = static_cast<int>(yoe) + era * 400;
+		unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+		unsigned mp = (5 * doy + 2) / 153;
+		unsigned d = doy - (153 * mp + 2) / 5 + 1;
+		unsigned m = mp + (mp < 10 ? 3 : -9);
+		y += (m <= 2);
+
 		char str[16];
-		std::strftime((char *)str, 16, "%Y%m%d%H%M%S", now_tm);
+		auto put2 = [](char *p, int v) { p[0] = '0' + v / 10; p[1] = '0' + v % 10; };
+		put2(str, y / 100);
+		put2(str + 2, y % 100);
+		put2(str + 4, m);
+		put2(str + 6, d);
+		put2(str + 8, hour);
+		put2(str + 10, min);
+		put2(str + 12, sec);
+		str[14] = '\0';
 		return std::string(str);
 	}
 
 	std::string Convert::toTimestampStr(const std::time_t &t)
 	{
-		std::tm *now_tm = std::gmtime(&t);
+		int64_t s = static_cast<int64_t>(t);
+		int sec = s % 60; s /= 60;
+		int min = s % 60; s /= 60;
+		int hour = s % 24; s /= 24;
+
+		int z = static_cast<int>(s) + 719468;
+		int era = (z >= 0 ? z : z - 146096) / 146097;
+		unsigned doe = static_cast<unsigned>(z - era * 146097);
+		unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+		int y = static_cast<int>(yoe) + era * 400;
+		unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+		unsigned mp = (5 * doy + 2) / 153;
+		unsigned d = doy - (153 * mp + 2) / 5 + 1;
+		unsigned m = mp + (mp < 10 ? 3 : -9);
+		y += (m <= 2);
+
 		char str[22];
-		std::strftime((char *)str, 22, "%Y/%m/%d %H:%M:%S", now_tm);
+		auto put2 = [](char *p, int v) { p[0] = '0' + v / 10; p[1] = '0' + v % 10; };
+		put2(str, y / 100);
+		put2(str + 2, y % 100);
+		str[4] = '/';
+		put2(str + 5, m);
+		str[7] = '/';
+		put2(str + 8, d);
+		str[10] = ' ';
+		put2(str + 11, hour);
+		str[13] = ':';
+		put2(str + 14, min);
+		str[16] = ':';
+		put2(str + 17, sec);
+		str[19] = '\0';
 		return std::string(str);
 	}
 

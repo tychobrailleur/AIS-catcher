@@ -145,10 +145,12 @@ namespace JSON
 			return -1;
 		}
 
+		void parse_into(JSON &target, Pool &pool, const std::string &j);
+
+	public:
 		Parser(int d = JSON_DICT_FULL) : dict(d) {}
 
 		Document parse(const std::string &j);
-		void parse_into(JSON &target, Pool &pool, const std::string &j);
 		void parse_into(Document &doc, const std::string &j) { parse_into(doc.root, doc.pool, j); }
 		void setSkipUnknown(bool b) { skipUnknownKeys = b; }
 		void setMap(int d)
