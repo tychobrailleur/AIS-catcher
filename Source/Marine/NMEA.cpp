@@ -191,14 +191,19 @@ namespace AIS
 			msg.reduceLength(a.fillbits);
 	}
 
-	// SWAR helpers (same as JSON parser)
-	static inline size_t has_byte(size_t word, char target)
+	// SWAR helpers
+	static constexpr size_t SWAR_ONES = ~(size_t)0 / 255;
+	static constexpr size_t SWAR_HIGHS = SWAR_ONES * 128;
+
+	static constexpr size_t swar_mask(char target)
 	{
-		const size_t ONES = ~(size_t)0 / 255;
-		const size_t HIGHS = ONES * 128;
-		size_t mask = ONES * (unsigned char)target;
+		return SWAR_ONES * (unsigned char)target;
+	}
+
+	static inline size_t has_byte(size_t word, size_t mask)
+	{
 		size_t v = word ^ mask;
-		return (v - ONES) & ~v & HIGHS;
+		return (v - SWAR_ONES) & ~v & SWAR_HIGHS;
 	}
 
 	void NMEA::split(const std::string &s, size_t offset /*= 0*/)
@@ -214,6 +219,8 @@ namespace AIS
 		// and accumulate XOR checksum, while recording comma positions
 		size_t cs_accum = 0;
 		const char *p = ptr;
+		constexpr size_t mask_star = swar_mask('*');
+		constexpr size_t mask_comma = swar_mask(',');
 
 		// Process size_t-aligned chunks
 		while (p + sizeof(size_t) <= end && splitCount < 16)
@@ -222,21 +229,15 @@ namespace AIS
 			memcpy(&word, p, sizeof(size_t));
 
 			// Check for '*' in this word
-			size_t star_mask = has_byte(word, '*');
-			if (star_mask)
-			{
-				// Found '*', process remaining bytes one at a time
+			if (has_byte(word, mask_star))
 				break;
-			}
 
 			// Accumulate checksum (all bytes before '*')
 			cs_accum ^= word;
 
 			// Check for commas in this word
-			size_t comma_mask = has_byte(word, ',');
-			if (comma_mask)
+			if (has_byte(word, mask_comma))
 			{
-				// Process byte-by-byte for this word to record comma positions
 				for (size_t j = 0; j < sizeof(size_t) && splitCount < 16; j++)
 				{
 					if (p[j] == ',')
@@ -991,6 +992,12 @@ namespace AIS
 				int size = data[j].size;
 				int i = 0;
 
+				// Compile-time SWAR masks for Receive scanning
+				constexpr size_t m_dollar = swar_mask('$'), m_bang = swar_mask('!');
+				constexpr size_t m_lbrace = swar_mask('{'), m_bslash = swar_mask('\\'), m_0xac = swar_mask((char)0xac);
+				constexpr size_t m_star = swar_mask('*'), m_cr = swar_mask('\r'), m_lf = swar_mask('\n');
+				constexpr size_t m_tab = swar_mask('\t'), m_nul = swar_mask('\0'), m_rbrace = swar_mask('}');
+
 				while (i < size)
 				{
 					if (state == ParseState::IDLE)
@@ -1002,7 +1009,7 @@ namespace AIS
 						{
 							size_t word;
 							memcpy(&word, buf + i, sizeof(size_t));
-							if (has_byte(word, '$') || has_byte(word, '!') || has_byte(word, '{') || has_byte(word, '\\') || has_byte(word, (char)0xac))
+							if (has_byte(word, m_dollar) || has_byte(word, m_bang) || has_byte(word, m_lbrace) || has_byte(word, m_bslash) || has_byte(word, m_0xac))
 								break;
 							// Update prev to last byte of this word
 							prev = buf[i + sizeof(size_t) - 1];
@@ -1066,7 +1073,7 @@ namespace AIS
 								size_t word;
 								memcpy(&word, buf + i, sizeof(size_t));
 								// Check for '*' (0x2A) or any control char (< 0x20)
-								if (has_byte(word, '*') || has_byte(word, '\r') || has_byte(word, '\n') || has_byte(word, '\t') || has_byte(word, '\0'))
+								if (has_byte(word, m_star) || has_byte(word, m_cr) || has_byte(word, m_lf) || has_byte(word, m_tab) || has_byte(word, m_nul))
 									break;
 								i += sizeof(size_t);
 							}
@@ -1083,7 +1090,7 @@ namespace AIS
 							{
 								size_t word;
 								memcpy(&word, buf + i, sizeof(size_t));
-								if (has_byte(word, '{') || has_byte(word, '}') || has_byte(word, '\r') || has_byte(word, '\n') || has_byte(word, '\t') || has_byte(word, '\0'))
+								if (has_byte(word, m_lbrace) || has_byte(word, m_rbrace) || has_byte(word, m_cr) || has_byte(word, m_lf) || has_byte(word, m_tab) || has_byte(word, m_nul))
 									break;
 								i += sizeof(size_t);
 							}
@@ -1100,7 +1107,7 @@ namespace AIS
 							{
 								size_t word;
 								memcpy(&word, buf + i, sizeof(size_t));
-								if (has_byte(word, '\n'))
+								if (has_byte(word, m_lf))
 									break;
 								i += sizeof(size_t);
 							}

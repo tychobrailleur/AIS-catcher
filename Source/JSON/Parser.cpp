@@ -51,13 +51,18 @@ namespace JSON
 
 	// Adaptive scanning helpers (size_t: 4 bytes on 32-bit, 8 bytes on 64-bit)
 
-	static inline size_t has_byte(size_t word, char target)
+	static constexpr size_t SWAR_ONES = ~(size_t)0 / 255;
+	static constexpr size_t SWAR_HIGHS = SWAR_ONES * 128;
+
+	static constexpr size_t swar_mask(char target)
 	{
-		const size_t ONES = ~(size_t)0 / 255;
-		const size_t HIGHS = ONES * 128;
-		size_t mask = ONES * (unsigned char)target;
+		return SWAR_ONES * (unsigned char)target;
+	}
+
+	static inline size_t has_byte(size_t word, size_t mask)
+	{
 		size_t v = word ^ mask;
-		return (v - ONES) & ~v & HIGHS;
+		return (v - SWAR_ONES) & ~v & SWAR_HIGHS;
 	}
 
 	static inline int first_byte_pos(size_t mask)
@@ -171,12 +176,15 @@ namespace JSON
 			tokenEscaped = false;
 
 			// Word-sized fast scan
+			constexpr size_t m_quote = swar_mask('"'), m_bslash = swar_mask('\\');
+			constexpr size_t m_lf = swar_mask('\n'), m_cr = swar_mask('\r');
+
 			while (p + sizeof(size_t) <= pend)
 			{
 				size_t chunk;
 				memcpy(&chunk, p, sizeof(size_t));
 
-				size_t special = has_byte(chunk, '"') | has_byte(chunk, '\\') | has_byte(chunk, '\n') | has_byte(chunk, '\r');
+				size_t special = has_byte(chunk, m_quote) | has_byte(chunk, m_bslash) | has_byte(chunk, m_lf) | has_byte(chunk, m_cr);
 				if (special)
 				{
 					p += first_byte_pos(special);
