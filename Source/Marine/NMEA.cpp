@@ -951,17 +951,18 @@ namespace AIS
 
 	bool NMEA::processNMEAline(const std::string &s, TAG &tag, int64_t t, int thisstation, int groupId, std::string &error_msg)
 	{
-		std::string type = s.size() > 5 ? s.substr(3, 3) : "";
+		if (s.size() <= 5)
+			return true;
 
-		if (type == "VDM")
+		if (s[3] == 'V' && s[4] == 'D' && s[5] == 'M')
 			return processAIS(s, tag, t, 0, 0, thisstation, groupId, error_msg);
-		if (type == "VDO" && VDO)
+		if (s[3] == 'V' && s[4] == 'D' && s[5] == 'O' && VDO)
 			return processAIS(s, tag, t, 0, 0, thisstation, groupId, error_msg);
-		if (type == "GGA")
+		if (s[3] == 'G' && s[4] == 'G' && s[5] == 'A')
 			return processGGA(s, tag, t, error_msg);
-		if (type == "RMC")
+		if (s[3] == 'R' && s[4] == 'M' && s[5] == 'C')
 			return processRMC(s, tag, t, error_msg);
-		if (type == "GLL")
+		if (s[3] == 'G' && s[4] == 'L' && s[5] == 'L')
 			return processGLL(s, tag, t, error_msg);
 
 		return true; // Unknown type, ignore

@@ -113,11 +113,7 @@ public:
 
 		int tmp;
 
-		if (!readInteger(file, tmp, 0x4f80b)) return false;
-		if (!readInteger(file, tmp, 1)) return false;
-		if (!readInteger(file, tmp, /*sizeof(history)*/ -1)) return false;
-		if (!readInteger(file, tmp, INTERVAL)) return false;
-		if (!readInteger(file, tmp, N)) return false;
+		if (!(readInteger(file, tmp, 0x4f80b) && readInteger(file, tmp, 1) && readInteger(file, tmp, /*sizeof(history)*/ -1) && readInteger(file, tmp, INTERVAL) && readInteger(file, tmp, N))) return false;
 
 		readInteger(file, start, -1);
 		readInteger(file, end, -1);
