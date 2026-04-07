@@ -502,7 +502,10 @@ namespace JSON
 			v.setNull();
 			break;
 		case TokenType::String:
-			v.setString(pool->addString(tokenString()));
+			if (tokenEscaped)
+				v.setString(pool->addString(escapedText.data(), escapedText.size()));
+			else
+				v.setString(pool->addString(tokenStart, tokenEnd - tokenStart));
 			break;
 		case TokenType::LeftBracket:
 		{

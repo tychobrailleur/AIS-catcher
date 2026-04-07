@@ -177,49 +177,7 @@ namespace JSON
 		const Value &Get() const { return value; }
 	};
 
-	// Flat pool: owns all strings, arrays, and nested JSON objects
-	class Pool
-	{
-		std::deque<JSON> objects;
-		std::deque<std::string> strings;
-		std::deque<std::vector<Value>> arrays;
-
-		size_t objectCount = 0;
-		size_t stringCount = 0;
-		size_t arrayCount = 0;
-
-	public:
-		JSON *addObject();
-
-		std::string *addString(const std::string &v)
-		{
-			if (stringCount < strings.size())
-				strings[stringCount] = v;
-			else
-				strings.push_back(v);
-			return &strings[stringCount++];
-		}
-
-		std::vector<Value> *addArray()
-		{
-			if (arrayCount < arrays.size())
-			{
-				arrays[arrayCount].clear();
-			}
-			else
-			{
-				arrays.push_back(std::vector<Value>());
-			}
-			return &arrays[arrayCount++];
-		}
-
-		void clear()
-		{
-			objectCount = 0;
-			stringCount = 0;
-			arrayCount = 0;
-		}
-	};
+	class Pool;
 
 	class JSON
 	{
@@ -270,10 +228,7 @@ namespace JSON
 			properties.push_back(Property(p, v));
 		}
 
-		void Add(int p, const std::string &v, Pool &pool)
-		{
-			properties.push_back(Property(p, pool.addString(v)));
-		}
+		void Add(int p, const std::string &v, Pool &pool);
 
 		void Add(int p)
 		{
@@ -297,14 +252,69 @@ namespace JSON
 		}
 	};
 
-	// Pool::addObject defined after JSON is complete
-	inline JSON *Pool::addObject()
+	// Flat pool: owns all strings, arrays, and nested JSON objects
+	class Pool
 	{
-		if (objectCount < objects.size())
-			objects[objectCount].clear();
-		else
-			objects.emplace_back();
-		return &objects[objectCount++];
+		std::deque<JSON> objects;
+		std::deque<std::string> strings;
+		std::deque<std::vector<Value>> arrays;
+
+		size_t objectCount = 0;
+		size_t stringCount = 0;
+		size_t arrayCount = 0;
+
+	public:
+		JSON *addObject()
+		{
+			if (objectCount < objects.size())
+				objects[objectCount].clear();
+			else
+				objects.emplace_back();
+			return &objects[objectCount++];
+		}
+
+		std::string *addString(const std::string &v)
+		{
+			if (stringCount < strings.size())
+				strings[stringCount] = v;
+			else
+				strings.push_back(v);
+			return &strings[stringCount++];
+		}
+
+		std::string *addString(const char *data, size_t len)
+		{
+			if (stringCount < strings.size())
+				strings[stringCount].assign(data, len);
+			else
+				strings.emplace_back(data, len);
+			return &strings[stringCount++];
+		}
+
+		std::vector<Value> *addArray()
+		{
+			if (arrayCount < arrays.size())
+			{
+				arrays[arrayCount].clear();
+			}
+			else
+			{
+				arrays.push_back(std::vector<Value>());
+			}
+			return &arrays[arrayCount++];
+		}
+
+		void clear()
+		{
+			objectCount = 0;
+			stringCount = 0;
+			arrayCount = 0;
+		}
+	};
+
+	inline void JSON::Add(int p, const std::string &v, Pool &pool)
+	{
+		properties.push_back(Property(p, pool.addString(v)));
 	}
 
 	// Document: owns a root JSON and its pool
