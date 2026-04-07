@@ -907,6 +907,100 @@ namespace AIS
 		return l < 40 ? (char)(l + 48) : (char)(l + 56);
 	}
 
+	static const uint8_t nmea_decode[256] = {
+		// indices 0-47: unused (control chars, space, punctuation before '0')
+		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+		// indices 48-87: '0'-'W' → 0-39  (c - 48)
+		 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,15,
+		16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,
+		32,33,34,35,36,37,38,39,
+		// indices 88-95: 'X'-'_' → 40-47  (c - 48)
+		40,41,42,43,44,45,46,47,
+		// indices 96-119: '`'-'w' → 40-63  (c - 56)
+		40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,
+		56,57,58,59,60,61,62,63
+	};
+
+	void Message::appendPayload(const char *src, int count)
+	{
+		int pos = length / 6;
+		int bitOff = (pos * 6) & 7;
+		int byteIdx = (pos * 6) >> 3;
+		int endBits = (pos + count) * 6;
+
+		if (endBits > MAX_AIS_LENGTH)
+			count = (MAX_AIS_LENGTH - pos * 6) / 6;
+
+		const uint8_t *usrc = (const uint8_t *)src;
+		int i = 0;
+
+		// 1. Head: align to byte boundary
+		while (i < count && bitOff != 0)
+		{
+			uint8_t v = nmea_decode[usrc[i++]];
+			switch (bitOff)
+			{
+			case 2:
+				data[byteIdx] = (data[byteIdx] & 0xC0) | v;
+				byteIdx++;
+				break;
+			case 4:
+				data[byteIdx] = (data[byteIdx] & 0xF0) | (v >> 2);
+				data[byteIdx + 1] = (data[byteIdx + 1] & 0x3F) | ((v & 3) << 6);
+				byteIdx++;
+				break;
+			case 6:
+				data[byteIdx] = (data[byteIdx] & 0xFC) | (v >> 4);
+				data[byteIdx + 1] = (data[byteIdx + 1] & 0x0F) | ((v & 0xF) << 4);
+				byteIdx++;
+				break;
+			}
+			bitOff = (bitOff + 6) & 7;
+		}
+
+		// 2. Bulk: 4 chars → 3 bytes, no branching
+		int bulk = (count - i) >> 2;
+		while (bulk--)
+		{
+			uint8_t c0 = nmea_decode[usrc[i]];
+			uint8_t c1 = nmea_decode[usrc[i + 1]];
+			uint8_t c2 = nmea_decode[usrc[i + 2]];
+			uint8_t c3 = nmea_decode[usrc[i + 3]];
+
+			data[byteIdx] = (c0 << 2) | (c1 >> 4);
+			data[byteIdx + 1] = (c1 << 4) | (c2 >> 2);
+			data[byteIdx + 2] = (c2 << 6) | c3;
+
+			byteIdx += 3;
+			i += 4;
+		}
+
+		// 3. Tail: 0-3 remaining chars, fully unrolled (bitOff cycle: 0, 6, 4)
+		int rem = count - i;
+		if (rem >= 1)
+		{
+			uint8_t v0 = nmea_decode[usrc[i]];
+			data[byteIdx] = (data[byteIdx] & 0x03) | (v0 << 2);
+		}
+		if (rem >= 2)
+		{
+			uint8_t v1 = nmea_decode[usrc[i + 1]];
+			data[byteIdx] = (data[byteIdx] & 0xFC) | (v1 >> 4);
+			byteIdx++;
+			data[byteIdx] = (data[byteIdx] & 0x0F) | ((v1 & 0xF) << 4);
+		}
+		if (rem >= 3)
+		{
+			uint8_t v2 = nmea_decode[usrc[i + 2]];
+			data[byteIdx] = (data[byteIdx] & 0xF0) | (v2 >> 2);
+			byteIdx++;
+			data[byteIdx] = (data[byteIdx] & 0x3F) | ((v2 & 3) << 6);
+		}
+
+		length = (pos + count) * 6;
+	}
+
 	void Message::setLetter(int pos, char c)
 	{
 		const int start = pos * 6;
@@ -919,7 +1013,7 @@ namespace AIS
 
 		length = MAX(end, length);
 
-		c = (c >= 96 ? c - 56 : c - 48) & 0b00111111;
+		c = nmea_decode[(unsigned char)c];
 
 		switch (y)
 		{

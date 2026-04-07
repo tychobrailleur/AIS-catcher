@@ -189,6 +189,7 @@ namespace AIS
 		char getLetter(int pos) const;
 		void setLetter(int pos, char c);
 		void appendLetter(char c) { setLetter(length / 6, c); }
+		void appendPayload(const char *src, int count);
 		void reduceLength(int l) { length = MAX(length - l, 0); }
 
 		void setLength(int l)

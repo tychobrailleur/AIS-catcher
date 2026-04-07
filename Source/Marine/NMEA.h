@@ -49,8 +49,8 @@ namespace AIS
 		struct AIVDM
 		{
 			std::string sentence;
-			std::string line;
-			std::string data;
+			uint16_t data_offset = 0;
+			uint16_t data_len = 0;
 
 			uint64_t timestamp;
 			int groupId = 0; // NMEA 4.0 tag block group ID
@@ -58,7 +58,8 @@ namespace AIS
 			void reset()
 			{
 				sentence.clear();
-				data.clear();
+				data_offset = 0;
+				data_len = 0;
 				timestamp = time(nullptr);
 				groupId = 0;
 				message_error = 0;
@@ -73,7 +74,19 @@ namespace AIS
 			uint32_t message_error;
 		} aivdm;
 
-		std::vector<std::string> parts;
+		// Zero-allocation field splitter: stores delimiter positions into source string
+		const std::string *splitStr = nullptr;
+		int splitDelim[18]; // delimiter positions (leading sentinel + up to 16 commas + trailing sentinel)
+		int splitCount = 0; // number of fields
+		int splitChecksum = 0; // XOR checksum accumulated during split
+
+		int partLen(int i) const { return splitDelim[i + 1] - splitDelim[i] - 1; }
+		char partAt(int i, int j) const { return (*splitStr)[splitDelim[i] + 1 + j]; }
+		const char *partPtr(int i) const { return splitStr->data() + splitDelim[i] + 1; }
+		bool partEmpty(int i) const { return partLen(i) == 0; }
+		std::string partStr(int i) const { return splitStr->substr(splitDelim[i] + 1, partLen(i)); }
+		int partInt(int i) const;
+		std::string trimPart(int i) const;
 
 		char prev = '\n';
 		ParseState state = ParseState::IDLE;
@@ -109,8 +122,7 @@ namespace AIS
 		JSON::Parser parser;
 		JSON::Document jsonDoc;
 
-		void split(const std::string &);
-		std::string trim(const std::string &);
+		void split(const std::string &, size_t offset = 0);
 		void processJSONsentence(const std::string &s, TAG &tag, int64_t t);
 		bool processAIS(const std::string &s, TAG &tag, int64_t t, uint64_t ssc, uint16_t sl, int thisstation, int groupId, std::string &error_msg, int64_t toa = 0);
 		bool processGGA(const std::string &s, TAG &tag, int64_t t, std::string &error_msg);
@@ -120,7 +132,7 @@ namespace AIS
 		bool parseTagBlock(const std::string &s, std::string &nmea, int64_t &timestamp, int &thisstation, int &groupId, std::string &error_msg);
 		bool processTagBlock(const std::string &s, TAG &tag, int64_t &t, std::string &error_msg);
 		bool processNMEAline(const std::string &s, TAG &tag, int64_t t, int thisstation, int groupId, std::string &error_msg);
-		bool isCompleteNMEA(const std::string &s, bool newline);
+		bool isCompleteNMEA(const std::string &s, size_t offset, bool newline);
 
 	public:
 		NMEA() : parser(JSON_DICT_INPUT)

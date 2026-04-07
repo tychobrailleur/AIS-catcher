@@ -85,7 +85,7 @@ namespace AIS
 
 	void NMEA::submitAIS(TAG &tag, int64_t t, uint64_t ssc, uint16_t sl, int thisstation, int64_t toa)
 	{
-		bool checksum_error = aivdm.checksum != NMEAchecksum(aivdm.sentence);
+		bool checksum_error = aivdm.checksum != splitChecksum;
 
 		if (checksum_error)
 		{
@@ -119,7 +119,7 @@ namespace AIS
 				if (regenerate)
 					msg.buildNMEA(tag);
 				else
-					msg.NMEA.push_back(aivdm.sentence);
+					msg.NMEA.push_back(std::move(aivdm.sentence));
 
 				Send(&msg, 1, tag);
 			}
@@ -186,31 +186,109 @@ namespace AIS
 
 	void NMEA::addline(const AIVDM &a)
 	{
-		for (char d : a.data)
-			msg.appendLetter(d);
+		msg.appendPayload(a.sentence.data() + a.data_offset, a.data_len);
 		if (a.count == a.number)
 			msg.reduceLength(a.fillbits);
 	}
 
-	void NMEA::split(const std::string &s)
+	// SWAR helpers (same as JSON parser)
+	static inline size_t has_byte(size_t word, char target)
 	{
-		parts.clear();
-		size_t start = 0;
-		size_t pos;
-		while ((pos = s.find(',', start)) != std::string::npos)
-		{
-			parts.emplace_back(s, start, pos - start);
-			start = pos + 1;
-		}
-		parts.emplace_back(s, start);
+		const size_t ONES = ~(size_t)0 / 255;
+		const size_t HIGHS = ONES * 128;
+		size_t mask = ONES * (unsigned char)target;
+		size_t v = word ^ mask;
+		return (v - ONES) & ~v & HIGHS;
 	}
 
-	std::string NMEA::trim(const std::string &s)
+	void NMEA::split(const std::string &s, size_t offset /*= 0*/)
+	{
+		splitStr = &s;
+		splitCount = 0;
+		splitDelim[0] = (int)offset - 1; // sentinel before first field
+
+		const char *ptr = s.data() + offset + 1; // +1 to skip leading $/!
+		const char *end = s.data() + s.size();
+
+		// Phase 1: scan size_t words for '*' to find checksum boundary
+		// and accumulate XOR checksum, while recording comma positions
+		size_t cs_accum = 0;
+		const char *p = ptr;
+
+		// Process size_t-aligned chunks
+		while (p + sizeof(size_t) <= end && splitCount < 16)
+		{
+			size_t word;
+			memcpy(&word, p, sizeof(size_t));
+
+			// Check for '*' in this word
+			size_t star_mask = has_byte(word, '*');
+			if (star_mask)
+			{
+				// Found '*', process remaining bytes one at a time
+				break;
+			}
+
+			// Accumulate checksum (all bytes before '*')
+			cs_accum ^= word;
+
+			// Check for commas in this word
+			size_t comma_mask = has_byte(word, ',');
+			if (comma_mask)
+			{
+				// Process byte-by-byte for this word to record comma positions
+				for (size_t j = 0; j < sizeof(size_t) && splitCount < 16; j++)
+				{
+					if (p[j] == ',')
+						splitDelim[++splitCount] = (int)(p - s.data() + j);
+				}
+			}
+
+			p += sizeof(size_t);
+		}
+
+		// Fold the size_t XOR accumulator down to a single byte
+		int cs = 0;
+		for (size_t k = 0; k < sizeof(size_t); k++)
+			cs ^= (int)((cs_accum >> (k * 8)) & 0xFF);
+
+		// Byte-at-a-time tail (remainder + everything after the break)
+		bool past_star = false;
+		for (; p < end && splitCount < 16; p++)
+		{
+			char c = *p;
+			if (c == '*') { past_star = true; continue; }
+			if (!past_star) cs ^= c;
+			if (c == ',')
+				splitDelim[++splitCount] = (int)(p - s.data());
+		}
+
+		splitChecksum = cs;
+		splitDelim[++splitCount] = (int)s.size(); // sentinel after last field
+	}
+
+	int NMEA::partInt(int i) const
+	{
+		int val = 0;
+		bool neg = false;
+		for (int j = 0, len = partLen(i); j < len; j++)
+		{
+			char c = partAt(i, j);
+			if (j == 0 && c == '-') { neg = true; continue; }
+			if (c < '0' || c > '9') break;
+			val = val * 10 + (c - '0');
+		}
+		return neg ? -val : val;
+	}
+
+	std::string NMEA::trimPart(int i) const
 	{
 		std::string r;
-		for (char c : s)
-			if (c != ' ')
-				r += c;
+		for (int j = 0, len = partLen(i); j < len; j++)
+		{
+			char c = partAt(i, j);
+			if (c != ' ') r += c;
+		}
 		return r;
 	}
 
@@ -257,14 +335,13 @@ namespace AIS
 
 		split(s);
 
-		if (parts.size() != 15)
+		if (splitCount != 15)
 		{
-			error_msg = "NMEA: GPGGA does not have 15 parts but " + std::to_string(parts.size());
+			error_msg = "NMEA: GPGGA does not have 15 parts but " + std::to_string(splitCount);
 			return false;
 		}
 
-		const std::string &crc = parts[14];
-		int checksum = crc.size() > 2 ? (fromHEX(crc[crc.length() - 2]) << 4) | fromHEX(crc[crc.length() - 1]) : -1;
+		int checksum = partLen(14) > 2 ? (fromHEX(partAt(14, partLen(14) - 2)) << 4) | fromHEX(partAt(14, partLen(14) - 1)) : -1;
 
 		if (checksum != NMEAchecksum(line))
 		{
@@ -277,17 +354,17 @@ namespace AIS
 		}
 
 		// no proper fix
-		int fix = atoi(parts[6].c_str());
+		int fix = partInt(6);
 		if (fix != 1 && fix != 2)
 		{
-			error_msg = "NMEA: no fix in GPGGA NMEA:" + parts[6];
+			error_msg = "NMEA: no fix in GPGGA NMEA:" + partStr(6);
 			return false;
 		}
 
-		std::string lat_coord = trim(parts[2]);
-		std::string lat_quad = trim(parts[3]);
-		std::string lon_coord = trim(parts[4]);
-		std::string lon_quad = trim(parts[5]);
+		std::string lat_coord = trimPart(2);
+		std::string lat_quad = trimPart(3);
+		std::string lon_coord = trimPart(4);
+		std::string lon_quad = trimPart(5);
 
 		if (lat_quad.empty() || lon_quad.empty())
 		{
@@ -319,11 +396,11 @@ namespace AIS
 
 		split(s);
 
-		if ((parts.size() < 12 || parts.size() > 14))
+		if (splitCount < 12 || splitCount > 14)
 			return false;
 
-		const std::string &crc = parts[parts.size() - 1];
-		int checksum = crc.size() > 2 ? (fromHEX(crc[crc.length() - 2]) << 4) | fromHEX(crc[crc.length() - 1]) : -1;
+		int last = splitCount - 1;
+		int checksum = partLen(last) > 2 ? (fromHEX(partAt(last, partLen(last) - 2)) << 4) | fromHEX(partAt(last, partLen(last) - 1)) : -1;
 
 		if (checksum != NMEAchecksum(line))
 		{
@@ -334,8 +411,8 @@ namespace AIS
 			}
 		}
 
-		std::string lat_quad = trim(parts[4]); // N/S
-		std::string lon_quad = trim(parts[6]); // E/W
+		std::string lat_quad = trimPart(4); // N/S
+		std::string lon_quad = trimPart(6); // E/W
 
 		if (lat_quad.empty() || lon_quad.empty())
 		{
@@ -343,8 +420,8 @@ namespace AIS
 			return false;
 		}
 
-		GPS gps(GpsToDecimal(trim(parts[3]).c_str(), lat_quad[0], error), // lat
-				GpsToDecimal(trim(parts[5]).c_str(), lon_quad[0], error), // lon
+		GPS gps(GpsToDecimal(trimPart(3).c_str(), lat_quad[0], error), // lat
+				GpsToDecimal(trimPart(5).c_str(), lon_quad[0], error), // lon
 				s, empty);
 
 		if (error)
@@ -367,14 +444,13 @@ namespace AIS
 		bool error = false;
 		split(s);
 
-		if (parts.size() != 8)
+		if (splitCount != 8)
 		{
-			error_msg = "NMEA: GLL does not have 8 parts but " + std::to_string(parts.size());
+			error_msg = "NMEA: GLL does not have 8 parts but " + std::to_string(splitCount);
 			return false;
 		}
 
-		const std::string &crc = parts[7];
-		int checksum = crc.size() > 2 ? (fromHEX(crc[crc.length() - 2]) << 4) | fromHEX(crc[crc.length() - 1]) : -1;
+		int checksum = partLen(7) > 2 ? (fromHEX(partAt(7, partLen(7) - 2)) << 4) | fromHEX(partAt(7, partLen(7) - 1)) : -1;
 
 		if (checksum != NMEAchecksum(line))
 		{
@@ -388,16 +464,13 @@ namespace AIS
 			}
 		}
 
-		std::string lat_quad = parts[2];
-		std::string lon_quad = parts[4];
-
-		if (lat_quad.empty() || lon_quad.empty())
+		if (partEmpty(2) || partEmpty(4))
 		{
 			return false;
 		}
 
-		float lat = GpsToDecimal(parts[1].c_str(), lat_quad[0], error);
-		float lon = GpsToDecimal(parts[3].c_str(), lon_quad[0], error);
+		float lat = GpsToDecimal(partPtr(1), partAt(2, 0), error);
+		float lon = GpsToDecimal(partPtr(3), partAt(4, 0), error);
 
 		if (error)
 		{
@@ -413,71 +486,68 @@ namespace AIS
 
 	bool NMEA::processAIS(const std::string &str, TAG &tag, int64_t t, uint64_t ssc, uint16_t sl, int thisstation, int groupId, std::string &error_msg, int64_t toa)
 	{
-		int pos = str.find_first_of("$!");
+		// Fast path: most NMEA lines start with $ or !
+		size_t pos = (!str.empty() && (str[0] == '$' || str[0] == '!')) ? 0 : str.find_first_of("$!");
 		if (pos == std::string::npos)
 		{
 			error_msg = "NMEA: no $ or ! in AIS sentence";
 			return false;
 		}
-		std::string nmea = str.substr(pos);
 
-		bool isNMEA = nmea.size() > 10 && (nmea[3] == 'V' && nmea[4] == 'D' && (nmea[5] == 'M' || nmea[5] == 'O'));
+		size_t len = str.size() - pos;
+		bool isNMEA = len > 10 && (str[pos + 3] == 'V' && str[pos + 4] == 'D' && (str[pos + 5] == 'M' || str[pos + 5] == 'O'));
 		if (!isNMEA)
 		{
 			return true; // no NMEA -> ignore
 		}
 
-		split(nmea);
+		split(str, pos);
 		aivdm.reset();
 
-		if (parts.size() != 7 || parts[0].size() != 6 || parts[1].size() != 1 || parts[2].size() != 1 || parts[3].size() > 1 || parts[4].size() > 1 || parts[6].size() != 4)
+		if (splitCount != 7 || partLen(0) != 6 || partLen(1) != 1 || partLen(2) != 1 || partLen(3) > 1 || partLen(4) > 1 || partLen(6) != 4)
 		{
 			error_msg = "NMEA: AIS sentence does not have 7 parts or has invalid part sizes";
 			return false;
 		}
-		if (parts[0][0] != '$' && parts[0][0] != '!')
+		if (partAt(0, 0) != '$' && partAt(0, 0) != '!')
 		{
 			error_msg = "NMEA: AIS sentence does not start with $ or !";
 			return false;
 		}
 
-		if (!std::isupper(parts[0][1]) || (!std::isupper(parts[0][2]) && !std::isdigit(parts[0][2])))
+		char t1 = partAt(0, 1), t2 = partAt(0, 2);
+		if (!(t1 >= 'A' && t1 <= 'Z') || (!(t2 >= 'A' && t2 <= 'Z') && !(t2 >= '0' && t2 <= '9')))
 		{
 			error_msg = "NMEA: AIS sentence does not have valid talker ID";
 			return false;
 		}
 
-		if (parts[0][3] != 'V' || parts[0][4] != 'D' || (parts[0][5] != 'M' && parts[0][5] != 'O'))
+		if (partAt(0, 3) != 'V' || partAt(0, 4) != 'D' || (partAt(0, 5) != 'M' && partAt(0, 5) != 'O'))
 		{
 			error_msg = "NMEA: AIS sentence does not have valid VDM or VDO";
 			return false;
 		}
 
-		aivdm.talkerID = ((parts[0][1] << 8) | parts[0][2]);
-		aivdm.count = parts[1][0] - '0';
-		aivdm.number = parts[2][0] - '0';
-		aivdm.ID = parts[3].size() > 0 ? parts[3][0] - '0' : 0;
-		aivdm.channel = parts[4].size() > 0 ? parts[4][0] : '?';
+		aivdm.talkerID = ((partAt(0, 1) << 8) | partAt(0, 2));
+		aivdm.count = partAt(1, 0) - '0';
+		aivdm.number = partAt(2, 0) - '0';
+		aivdm.ID = partLen(3) > 0 ? partAt(3, 0) - '0' : 0;
+		aivdm.channel = partLen(4) > 0 ? partAt(4, 0) : '?';
 
-		for (auto c : parts[5])
-		{
-			if (!isNMEAchar(c))
-			{
-				error_msg = "NMEA: AIS sentence contains invalid NMEA character '" + std::string(1, c) + "'";
-				return false;
-			}
-		}
-		aivdm.data = parts[5];
-		aivdm.fillbits = parts[6][0] - '0';
+		aivdm.data_offset = splitDelim[5] + 1;
+		aivdm.data_len = partLen(5);
+		aivdm.fillbits = partAt(6, 0) - '0';
 
-		if (!isHEX(parts[6][2]) || !isHEX(parts[6][3]))
+		if (!isHEX(partAt(6, 2)) || !isHEX(partAt(6, 3)))
 		{
 			error_msg = "NMEA: AIS sentence does not have valid checksum";
 			return false;
 		}
-		aivdm.checksum = (fromHEX(parts[6][2]) << 4) | fromHEX(parts[6][3]);
+		aivdm.checksum = (fromHEX(partAt(6, 2)) << 4) | fromHEX(partAt(6, 3));
 
-		aivdm.sentence = nmea;
+		// One assignment, reuses sentence buffer if large enough
+		aivdm.sentence.assign(str, pos, std::string::npos);
+		aivdm.data_offset -= pos;
 		aivdm.groupId = groupId;
 
 		submitAIS(tag, t, ssc, sl, thisstation, toa);
@@ -857,17 +927,19 @@ namespace AIS
 		return true;
 	}
 
-	bool NMEA::isCompleteNMEA(const std::string &s, bool newline)
+	bool NMEA::isCompleteNMEA(const std::string &s, size_t offset, bool newline)
 	{
-		if (s.size() < 7)
+		size_t len = s.size() - offset;
+		if (len < 7)
 			return false;
 
 		// Check for VDM/VDO with valid checksum pattern
-		bool isVDx = s.size() > 10 && (s[3] == 'V' && s[4] == 'D' && (s[5] == 'M' || s[5] == 'O'));
+		bool isVDx = len > 10 && (s[offset + 3] == 'V' && s[offset + 4] == 'D' && (s[offset + 5] == 'M' || s[offset + 5] == 'O'));
 		if (isVDx)
 		{
-			bool hasChecksum = isHEX(s[s.size() - 1]) && isHEX(s[s.size() - 2]) && s[s.size() - 3] == '*' &&
-							   ((isdigit(s[s.size() - 4]) && s[s.size() - 5] == ',') || (s[s.size() - 4] == ','));
+			size_t sz = s.size();
+			bool hasChecksum = isHEX(s[sz - 1]) && isHEX(s[sz - 2]) && s[sz - 3] == '*' &&
+							   ((isdigit(s[sz - 4]) && s[sz - 5] == ',') || (s[sz - 4] == ','));
 			if (hasChecksum)
 				return true;
 		}
@@ -915,47 +987,150 @@ namespace AIS
 
 			for (int j = 0; j < len; j++)
 			{
-				for (int i = 0; i < data[j].size; i++)
-				{
-					char c = ((char *)(data[j].data))[i];
+				const char *buf = (const char *)data[j].data;
+				int size = data[j].size;
+				int i = 0;
 
+				while (i < size)
+				{
 					if (state == ParseState::IDLE)
 					{
-						if (c == '{' && (prev == '\n' || prev == '\r' || prev == '}'))
+						// SWAR fast-forward: skip bytes that can't be start characters
+						// Start chars: $ (0x24), ! (0x21), { (0x7B), \ (0x5C), 0xAC
+						// In IDLE after a newline, most bytes are \r\n between messages — skip them fast
+						while (i + (int)sizeof(size_t) <= size)
 						{
-							line = c;
-							state = ParseState::JSON;
-							count = 1;
+							size_t word;
+							memcpy(&word, buf + i, sizeof(size_t));
+							if (has_byte(word, '$') || has_byte(word, '!') || has_byte(word, '{') || has_byte(word, '\\') || has_byte(word, (char)0xac))
+								break;
+							// Update prev to last byte of this word
+							prev = buf[i + sizeof(size_t) - 1];
+							i += sizeof(size_t);
 						}
-						else if (c == '\\' && (prev == '\n' || prev == '\r'))
+						for (; i < size; i++)
 						{
-							line = c;
-							state = ParseState::TAG_BLOCK;
+							char c = buf[i];
+							if (c == '{' && (prev == '\n' || prev == '\r' || prev == '}'))
+							{
+								state = ParseState::JSON;
+								line = c;
+								count = 1;
+								prev = c;
+								i++;
+								break;
+							}
+							else if (c == '\\' && (prev == '\n' || prev == '\r'))
+							{
+								state = ParseState::TAG_BLOCK;
+								line = c;
+								prev = c;
+								i++;
+								break;
+							}
+							else if (c == '$' || c == '!')
+							{
+								state = ParseState::NMEA;
+								line = c;
+								prev = c;
+								i++;
+								break;
+							}
+							else if ((unsigned char)c == 0xac)
+							{
+								state = ParseState::BINARY;
+								line = c;
+								prev = c;
+								i++;
+								break;
+							}
+							prev = c;
 						}
-						else if (c == '$' || c == '!')
-						{
-							line = c;
-							state = ParseState::NMEA;
-						}
-						else if ((unsigned char)c == 0xac)
-						{
-							line = c;
-							state = ParseState::BINARY;
-						}
-						prev = c;
 						continue;
 					}
 
+					char c = buf[i];
 					bool newline = (state == ParseState::BINARY) ? (c == '\n') : (c == '\r' || c == '\n' || c == '\t' || c == '\0');
 
-					if (!newline) {
+					// Bulk-append block of non-special characters
+					if (!newline && c != '{' && c != '}' && c != '*' && !hasStar)
+					{
+						int start = i;
+
+						if (state == ParseState::NMEA || state == ParseState::TAG_BLOCK)
+						{
+							// SWAR scan: find first *, \r, \n, \t, \0 in 8-byte chunks
+							// All target bytes are < 0x2A (*=0x2A), so check for any byte <= 0x2A
+							while (i + (int)sizeof(size_t) <= size)
+							{
+								size_t word;
+								memcpy(&word, buf + i, sizeof(size_t));
+								// Check for '*' (0x2A) or any control char (< 0x20)
+								if (has_byte(word, '*') || has_byte(word, '\r') || has_byte(word, '\n') || has_byte(word, '\t') || has_byte(word, '\0'))
+									break;
+								i += sizeof(size_t);
+							}
+							for (; i < size; i++)
+							{
+								char bc = buf[i];
+								if (bc == '*' || bc == '\r' || bc == '\n' || bc == '\t' || bc == '\0')
+									break;
+							}
+						}
+						else if (state == ParseState::JSON)
+						{
+							while (i + (int)sizeof(size_t) <= size)
+							{
+								size_t word;
+								memcpy(&word, buf + i, sizeof(size_t));
+								if (has_byte(word, '{') || has_byte(word, '}') || has_byte(word, '\r') || has_byte(word, '\n') || has_byte(word, '\t') || has_byte(word, '\0'))
+									break;
+								i += sizeof(size_t);
+							}
+							for (; i < size; i++)
+							{
+								char bc = buf[i];
+								if (bc == '{' || bc == '}' || bc == '\r' || bc == '\n' || bc == '\t' || bc == '\0')
+									break;
+							}
+						}
+						else if (state == ParseState::BINARY)
+						{
+							while (i + (int)sizeof(size_t) <= size)
+							{
+								size_t word;
+								memcpy(&word, buf + i, sizeof(size_t));
+								if (has_byte(word, '\n'))
+									break;
+								i += sizeof(size_t);
+							}
+							for (; i < size; i++)
+							{
+								if (buf[i] == '\n')
+									break;
+							}
+						}
+
+						if (i > start)
+						{
+							line.append(buf + start, i - start);
+							prev = buf[i - 1];
+						}
+						continue;
+					}
+
+					// Process single control/boundary character
+					i++;
+
+					if (!newline)
+					{
 						line += c;
 						if (c == '*') hasStar = true;
 					}
 					prev = c;
+
 					if (state == ParseState::JSON)
 					{
-						// we do not allow nested JSON, so processing until newline character or '}'
 						if (c == '{')
 							count++;
 						else if (c == '}')
@@ -965,7 +1140,6 @@ namespace AIS
 							{
 								t = 0;
 								tag.clear();
-
 								processJSONsentence(line, tag, t);
 								reset(c);
 							}
@@ -979,7 +1153,7 @@ namespace AIS
 					}
 					else if (state == ParseState::NMEA)
 					{
-						if ((hasStar || newline) && isCompleteNMEA(line, newline))
+						if ((hasStar || newline) && isCompleteNMEA(line, 0, newline))
 						{
 							std::string error = "unspecified error";
 							tag.clear();
@@ -998,8 +1172,7 @@ namespace AIS
 					}
 					else if (state == ParseState::BINARY)
 					{
-						// Binary packet processing - collect until newline
-						if (c == '\n')
+						if (newline)
 						{
 							std::string error;
 							tag.clear();
@@ -1018,13 +1191,10 @@ namespace AIS
 					}
 					else if (state == ParseState::TAG_BLOCK)
 					{
-						// Tag block processing - format: \s:source,c:timestamp,g:seq-total-id*checksum\NMEA
-						// Find NMEA part after tag block to check for completion
 						size_t tagEnd = line.find('\\', 1);
-						std::string nmeaPart = (tagEnd != std::string::npos) ? line.substr(tagEnd + 1) : "";
-						if ((hasStar || newline) && isCompleteNMEA(nmeaPart, newline))
+						size_t offset = (tagEnd != std::string::npos) ? (tagEnd + 1) : line.size();
+						if ((hasStar || newline) && isCompleteNMEA(line, offset, newline))
 						{
-							// Parse complete tag block line
 							std::string error;
 							tag.clear();
 							t = 0;
@@ -1037,6 +1207,7 @@ namespace AIS
 							reset(c);
 						}
 					}
+
 					if (line.size() > 1024)
 						reset(c);
 				}
