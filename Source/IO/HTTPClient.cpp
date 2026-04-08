@@ -127,10 +127,10 @@ namespace IO
 		createHeader(gzip, multipart);
 
 		// Set up protocol chain: TCP -> TLS (if secure)
-		tcp.setValue("HOST", host);
-		tcp.setValue("PORT", port);
-		tcp.setValue("PERSISTENT", "false");
-		tcp.setValue("TIMEOUT", "1");
+		tcp.setOptionKey(AIS::KEY_SETTING_HOST, host);
+		tcp.setOptionKey(AIS::KEY_SETTING_PORT, port);
+		tcp.setOptionKey(AIS::KEY_SETTING_PERSIST, "false");
+		tcp.setOptionKey(AIS::KEY_SETTING_TIMEOUT, "1");
 
 		if (secure)
 		{

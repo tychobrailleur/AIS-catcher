@@ -156,7 +156,7 @@ public:
 	float getMsgRate() { return hist_second.getAverage(); }
 
 	std::string getShipsJSON(bool full = false) { return ships.getJSON(full); }
-	std::string getShipsJSONcompact() { return ships.getJSONcompact(); }
+	std::string getShipsJSONcompact(std::time_t since = 0) { return ships.getJSONcompact(false, since); }
 	std::string getBinaryMessagesJSON() { return ships.getBinaryMessagesJSON(); }
 	std::string getKML() { return ships.getKML(); }
 	std::string getGeoJSON() { return ships.getGeoJSON(); }

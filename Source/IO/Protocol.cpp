@@ -1087,23 +1087,31 @@ namespace Protocol
 		connected = false;
 	}
 
-	bool MQTT::setValue(const std::string &key, const std::string &value)
+	bool MQTT::setOptionKey(AIS::Keys key, const std::string &value)
 	{
-		if (key == "TOPIC")
+		switch (key)
+		{
+		case AIS::KEY_SETTING_TOPIC:
 			topic = value;
-		else if (key == "CLIENT_ID")
+			break;
+		case AIS::KEY_SETTING_CLIENT_ID:
 			client_id = value;
-		else if (key == "USERNAME")
+			break;
+		case AIS::KEY_SETTING_USERNAME:
 			username = value;
-		else if (key == "PASSWORD")
+			break;
+		case AIS::KEY_SETTING_PASSWORD:
 			password = value;
-		else if (key == "QOS")
-			qos = Util::Parse::Integer(value, 0, 2, key);
-		else if (key == "SUBSCRIBE")
+			break;
+		case AIS::KEY_SETTING_QOS:
+			qos = Util::Parse::Integer(value, 0, 2);
+			break;
+		case AIS::KEY_SETTING_SUBSCRIBE:
 			subscribe = Util::Parse::Switch(value);
-		else
+			break;
+		default:
 			return false;
-
+		}
 		return true;
 	}
 
@@ -1665,25 +1673,23 @@ namespace Protocol
 		ProtocolBase::onDisconnect();
 	}
 
-	bool WebSocket::setValue(const std::string &key, const std::string &value)
+	bool WebSocket::setOptionKey(AIS::Keys key, const std::string &value)
 	{
-		if (key == "ORIGIN")
+		switch (key)
 		{
+		case AIS::KEY_SETTING_ORIGIN:
 			origin = value;
-			return true;
-		}
-		else if (key == "PROTOCOLS")
-		{
+			break;
+		case AIS::KEY_SETTING_PROTOCOLS:
 			protocols = value;
-			return true;
-		}
-		else if (key == "BINARY")
-		{
+			break;
+		case AIS::KEY_SETTING_BINARY:
 			binary = Util::Parse::Switch(value);
-			return true;
+			break;
+		default:
+			return false;
 		}
-
-		return false;
+		return true;
 	}
 
 	std::string WebSocket::getValues()

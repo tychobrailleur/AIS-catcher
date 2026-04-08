@@ -16,16 +16,12 @@
 */
 
 #include <string>
-#include <cmath>
 
 #include "StringBuilder.h"
-#include "Keys.h"
 
 namespace JSON {
 
-	// StringBuilder - Build string from JSON object
-
-	void StringBuilder::stringify(const std::string& str, std::string& json, bool esc) {
+	void stringify(const std::string& str, std::string& json, bool esc) {
 		if (esc) json += '\"';
 		const char *s = str.data();
 		size_t len = str.size();
@@ -44,110 +40,5 @@ namespace JSON {
 		}
 		if (len > start) json.append(s + start, len - start);
 		if (esc) json += '\"';
-	}
-
-	void StringBuilder::to_string_enhanced(std::string& json, const Value& v, int key_index) {
-		json += '{';
-
-		json.append("\"value\":", 8);
-		to_string(json, v);
-
-		if (key_index >= 0 && key_index < AIS::KEY_COUNT) {
-			const AIS::KeyInfo& info = AIS::KeyInfoMap[key_index];
-
-			if (info.unit && info.unit[0] != '\0') {
-				json.append(",\"unit\":", 8);
-				stringify(info.unit, json);
-			}
-
-			if (info.description && info.description[0] != '\0') {
-				json.append(",\"description\":", 15);
-				stringify(info.description, json);
-			}
-
-			if (info.lookup_table && (v.isInt() || v.isFloat())) {
-				int numeric_value = v.isInt() ? v.getInt() : static_cast<int>(v.getFloat());
-				if (numeric_value >= 0 && numeric_value < (int)info.lookup_table->size()) {
-					json.append(",\"text\":", 8);
-					stringify((*info.lookup_table)[numeric_value], json);
-				}
-			}
-		}
-
-		json += '}';
-	}
-
-	void StringBuilder::to_string(std::string& json, const Value& v) {
-
-		if (v.isString()) {
-			stringify(v.getString(), json);
-		}
-		else if (v.isObject()) {
-			stringify(v.getObject(), json);
-		}
-		else if (v.isArrayString()) {
-
-			const std::vector<std::string>& as = v.getStringArray();
-
-			json += '[';
-
-			if (as.size()) {
-				stringify(as[0], json);
-
-				for (int i = 1; i < as.size(); i++) {
-					json += ',';
-					stringify(as[i], json);
-				}
-			}
-
-			json += ']';
-		}
-		else if (v.isArray()) {
-
-			const std::vector<Value>& a = v.getArray();
-
-			json += '[';
-
-			bool first = true;
-			for (const auto& val : a) {
-
-				if (!first) json += ',';
-				first = false;
-
-				to_string(json, val);
-			}
-
-			json += ']';
-		}
-		else
-			v.to_string(json);
-	}
-
-	void StringBuilder::stringify(const JSON& object, std::string& json) {
-		bool first = true;
-		json += '{';
-		for (const Property& p : object.getProperties()) {
-
-			if (p.Key() < 0 || p.Key() >= AIS::KEY_COUNT) continue;
-
-			const char* key = AIS::KeyMap[p.Key()][dict];
-
-			if (key[0] != '\0') {
-
-				if (!first) json += ',';
-				first = false;
-
-				json += '"';
-				json.append(key);
-				json.append("\":", 2);
-
-				if (stringify_enhanced) {
-					to_string_enhanced(json, p.Get(), p.Key());
-				} else {
-					to_string(json, p.Get());
-				}
-			}
-		}
-		json += '}';
 	}
 }

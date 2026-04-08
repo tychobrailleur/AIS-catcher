@@ -24,6 +24,7 @@
 
 #include "Common.h"
 #include "Stream.h"
+#include "Keys.h"
 
 namespace Util
 {
@@ -154,6 +155,6 @@ namespace Util
 		virtual ~WriteWAV();
 		void Receive(const RAW *raw, int len, TAG &tag);
 
-		bool setValue(std::string option, std::string arg);
+		bool setOptionKey(AIS::Keys key, const std::string &arg);
 	};
 }

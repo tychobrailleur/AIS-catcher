@@ -34,15 +34,21 @@ const int BASESTATION_MASK = (1 << 4) | (1 << 16) | (1 << 17) | (1 << 20) | (1 <
 const int SAR_MASK = 1 << 9;
 const int ATON_MASK = 1 << 21;
 
+struct ShipLL
+{
+    int prev = -1, next = -1;
+};
+
 struct Ship
 {
-    int prev, next;
+    ShipLL incoming; // time-ordered linked list
+    ShipLL hash;     // hash bucket chain
     uint32_t mmsi;
     int count, msg_type, shipclass, mmsi_type, shiptype, heading, status, path_ptr;
     int to_port, to_bow, to_starboard, to_stern, IMO, angle, altitude, received_stations;
     char month, day, hour, minute;
     float lat, lon, ppm, level, speed, cog, draught, distance;
-    std::time_t last_signal, last_direct_signal;
+    std::time_t last_signal, last_direct_signal, last_static_signal;
     char shipname[21], destination[21], callsign[8], country_code[3];
     std::string msg;
     uint64_t last_group, group_mask;

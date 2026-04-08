@@ -64,7 +64,8 @@ class DB : public StreamIn<JSON::JSON>,
 		   public StreamOut<JSON::JSON>
 {
 
-	JSON::StringBuilder builder;
+	JSON::StringBuilder builder{JSON_DICT_FULL};
+	char jsonBuf[4096];
 
 	int first, last, count, path_idx = 0;
 	std::string content, delim;
@@ -78,19 +79,28 @@ class DB : public StreamIn<JSON::JSON>,
 
 	int Nships = 4096;
 	int Npaths = Nships * 16;
+	int HASH_SIZE = 8209;
+
+	struct HashBucket
+	{
+		int first = -1;
+		int last = -1;
+	};
 
 	std::vector<Ship> ships;
 	std::vector<PathPoint> paths;
+	std::vector<HashBucket> hash_table;
 
 	bool isValidCoord(float lat, float lon);
 
 	static float deg2rad(float deg) { return deg * PI / 180.0f; }
 	static int rad2deg(float rad) { return (int)(360 + rad * 180 / PI) % 360; }
+	int Hash(uint32_t mmsi) { return mmsi % HASH_SIZE; }
 
 	int findShip(uint32_t mmsi);
-	int createShip();
+	int createShip(int hash);
 	void moveShipToFront(int);
-	bool updateFields(const JSON::Property &p, const AIS::Message *msg, Ship &v, bool allowApproximate);
+	bool updateFields(const JSON::Property &p, const AIS::Message *msg, Ship &v, bool allowApproximate, bool &staticUpdated);
 
 	bool updateShip(const JSON::JSON &, TAG &, Ship &);
 	void addToPath(int ptr);
@@ -111,6 +121,8 @@ class DB : public StreamIn<JSON::JSON>,
 	int binaryMsgIndex = 0;
 
 	void processBinaryMessage(const JSON::JSON &data, Ship &ship, bool &position_updated);
+	void checkIntegrity();
+	int update_counter = 0;
 
 public:
 	DB() : builder(JSON_DICT_FULL) {}
@@ -148,7 +160,7 @@ public:
 
 	std::string getShipJSON(int mmsi);
 	std::string getJSON(bool full = false);
-	std::string getJSONcompact(bool full = false);
+	std::string getJSONcompact(bool full = false, std::time_t since = 0);
 	std::string getPathJSON(uint32_t);
 	std::string getAllPathJSON();
 	std::string getAllPathJSONSince(std::time_t since);

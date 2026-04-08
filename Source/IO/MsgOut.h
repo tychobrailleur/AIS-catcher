@@ -40,8 +40,7 @@ namespace IO
 		std::string json;
 		char jsonBuf[4096];
 		AIS::Filter filter;
-		JSON::StringBuilder builder;
-		JSON::StringBuilderArray fastBuilder{JSON_DICT_FULL};
+		JSON::StringBuilder builder{JSON_DICT_FULL};
 
 		OutputStats stats;
 		std::string description, type;
@@ -54,7 +53,6 @@ namespace IO
 		void ConnectMessage(Receiver &r);
 		void ConnectJSON(Receiver &r);
 
-	public:
 		virtual void Start() {}
 		virtual void Stop() {}
 		void Connect(Receiver &r);
@@ -102,6 +100,8 @@ namespace IO
 					throw std::runtime_error("Uknown message format: " + arg);
 				if (fmt == MessageFormat::JSON_ANNOTATED)
 					builder.setStringifyEnhanced(true);
+				else if (fmt == MessageFormat::JSON_SPARSE)
+					builder.setMap(JSON_DICT_SPARSE);
 				return true;
 			case AIS::KEY_SETTING_DESCRIPTION:
 				description = arg;

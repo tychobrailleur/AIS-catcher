@@ -38,7 +38,7 @@ namespace Device
 	void SpyServer::Open(uint64_t h)
 	{
 		Debug() << "Connecting to SpyServer...";
-		client.setValue("TIMEOUT", std::to_string(timeout));
+		client.setOptionKey(AIS::KEY_SETTING_TIMEOUT, std::to_string(timeout));
 
 		if (!client.connect()) // host, port, false, timeout))
 			throw std::runtime_error("SPYSERVER: cannot open connection.");
@@ -455,20 +455,20 @@ namespace Device
 				SetKey(AIS::KEY_SETTING_PORT, p);
 			if (!prot.empty() && prot != "sdr")
 				throw std::runtime_error("SPYSERVER: protocol not supported.");
-			client.setValue("URL", arg);
+			client.setOptionKey(AIS::KEY_SETTING_URL, arg);
 			break;
 		}
 		case AIS::KEY_SETTING_GAIN:
 			tuner_gain = Util::Parse::Float(arg, 0, 50);
-			client.setValue("GAIN", arg);
+			client.setOptionKey(AIS::KEY_SETTING_GAIN, arg);
 			break;
 		case AIS::KEY_SETTING_HOST:
 			host = arg;
-			client.setValue("HOST", arg);
+			client.setOptionKey(AIS::KEY_SETTING_HOST, arg);
 			break;
 		case AIS::KEY_SETTING_PORT:
 			port = arg;
-			client.setValue("PORT", arg);
+			client.setOptionKey(AIS::KEY_SETTING_PORT, arg);
 			break;
 		default:
 			Device::SetKey(key, arg);

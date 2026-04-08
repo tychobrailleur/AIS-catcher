@@ -52,7 +52,7 @@ void Ship::reset()
 	speed = SPEED_UNDEFINED;
 
 	cog = COG_UNDEFINED;
-	last_signal = last_direct_signal = {};
+	last_signal = last_direct_signal = last_static_signal = {};
 	shipclass = CLASS_UNKNOWN;
 	mmsi_type = MMSI_OTHER;
 
@@ -175,15 +175,15 @@ bool Ship::getGeoJSON(std::string &s) const
 
 	s += "\"callsign\":";
 	str = std::string(callsign);
-	JSON::StringBuilder::stringify(str, s);
+	JSON::stringify(str, s);
 
 	s += ",\"shipname\":";
 	str = std::string(shipname) + (getVirtualAid() ? std::string(" [V]") : std::string(""));
-	JSON::StringBuilder::stringify(str, s);
+	JSON::stringify(str, s);
 
 	s += ",\"destination\":";
 	str = std::string(destination);
-	JSON::StringBuilder::stringify(str, s);
+	JSON::stringify(str, s);
 
 	s += ",\"last_signal\":" + std::to_string(last_signal);
 	s += "},\"geometry\":{\"type\":\"Point\",\"coordinates\":" + coordinates + "}}";
@@ -458,9 +458,9 @@ bool Ship::Save(std::ofstream &file) const
 		return false;
 	if (!file.write((const char *)&last_group, sizeof(last_group)))
 		return false;
-	if (!file.write((const char *)&next, sizeof(next)))
+	if (!file.write((const char *)&incoming.next, sizeof(incoming.next)))
 		return false;
-	if (!file.write((const char *)&prev, sizeof(prev)))
+	if (!file.write((const char *)&incoming.prev, sizeof(incoming.prev)))
 		return false;
 	if (!file.write((const char *)&path_ptr, sizeof(path_ptr)))
 		return false;
@@ -556,9 +556,9 @@ bool Ship::Load(std::ifstream &file)
 		return false;
 	if (!file.read((char *)&last_group, sizeof(last_group)))
 		return false;
-	if (!file.read((char *)&next, sizeof(next)))
+	if (!file.read((char *)&incoming.next, sizeof(incoming.next)))
 		return false;
-	if (!file.read((char *)&prev, sizeof(prev)))
+	if (!file.read((char *)&incoming.prev, sizeof(incoming.prev)))
 		return false;
 	if (!file.read((char *)&path_ptr, sizeof(path_ptr)))
 		return false;

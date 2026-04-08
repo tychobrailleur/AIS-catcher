@@ -390,10 +390,10 @@ namespace AIS
 			station = Util::Parse::Integer(arg);
 			break;
 		case AIS::KEY_SETTING_DUMP:
-			wavA.setValue("FILE", arg + "_A.wav");
-			wavB.setValue("FILE", arg + "_B.wav");
-			wavA.setValue("RATE", "48000");
-			wavB.setValue("RATE", "48000");
+			wavA.setOptionKey(AIS::KEY_SETTING_FILE, arg + "_A.wav");
+			wavB.setOptionKey(AIS::KEY_SETTING_FILE, arg + "_B.wav");
+			wavA.setOptionKey(AIS::KEY_SETTING_SAMPLE_RATE, "48000");
+			wavB.setOptionKey(AIS::KEY_SETTING_SAMPLE_RATE, "48000");
 			dump = true;
 			break;
 		default:
@@ -889,7 +889,7 @@ namespace AIS
 		setName("Export output");
 		device = dev;
 
-		wav.setValue("rate", std::to_string(sample_rate));
+		wav.setOptionKey(AIS::KEY_SETTING_SAMPLE_RATE, std::to_string(sample_rate));
 
 		Connection<RAW> &physical = timerOn ? (*device >> timer).out : device->out;
 		physical >> wav;

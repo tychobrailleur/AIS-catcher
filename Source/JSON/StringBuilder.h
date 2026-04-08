@@ -30,39 +30,20 @@
 namespace JSON
 {
 
+	void stringify(const std::string &str, std::string &json, bool esc = true);
+
+	inline std::string stringify(const std::string &str, bool esc = true)
+	{
+		std::string s;
+		stringify(str, s, esc);
+		return s;
+	}
+
 	class StringBuilder
 	{
 	private:
 		int dict = 0;
 		bool stringify_enhanced = false;
-
-	public:
-		StringBuilder(int d = JSON_DICT_FULL) : dict(d) {}
-
-		void to_string(std::string &json, const Value &v);
-		void to_string_enhanced(std::string &json, const Value &v, int key_index);
-		void stringify(const JSON &properties, std::string &json);
-		static void stringify(const std::string &str, std::string &json, bool esc = true);
-
-		static std::string stringify(const std::string &str, bool esc = true)
-		{
-			std::string s;
-			stringify(str, s, esc);
-			return s;
-		}
-
-		// dictionary to use
-		void setMap(int d) { dict = d; }
-
-		// enable/disable enhanced output with metadata
-		void setStringifyEnhanced(bool enhanced) { stringify_enhanced = enhanced; }
-		bool getStringifyEnhanced() const { return stringify_enhanced; }
-	};
-
-	class StringBuilderArray
-	{
-	private:
-		int dict = 0;
 
 		char *buf = nullptr;
 		char *ptr = nullptr;
@@ -132,7 +113,6 @@ namespace JSON
 				v = -v;
 			}
 
-			// Avoid 64-bit integer division (catastrophic on 32-bit ARM)
 			long long whole = (long long)v;
 			int frac = (int)((v - (double)whole) * 1000000.0 + 0.5);
 
@@ -250,6 +230,42 @@ namespace JSON
 			}
 		}
 
+		void write_value_enhanced(const Value &v, int key_index)
+		{
+			append('{');
+			append("\"value\":", 8);
+			write_value(v);
+
+			if (key_index >= 0 && key_index < AIS::KEY_COUNT)
+			{
+				const AIS::KeyInfo &info = AIS::KeyInfoMap[key_index];
+
+				if (info.unit && info.unit[0] != '\0')
+				{
+					append(",\"unit\":", 8);
+					append_string_escaped(info.unit);
+				}
+
+				if (info.description && info.description[0] != '\0')
+				{
+					append(",\"description\":", 15);
+					append_string_escaped(info.description);
+				}
+
+				if (info.lookup_table && (v.isInt() || v.isFloat()))
+				{
+					int numeric_value = v.isInt() ? v.getInt() : static_cast<int>(v.getFloat());
+					if (numeric_value >= 0 && numeric_value < (int)info.lookup_table->size())
+					{
+						append(",\"text\":", 8);
+						append_string_escaped((*info.lookup_table)[numeric_value]);
+					}
+				}
+			}
+
+			append('}');
+		}
+
 		void write_object(const JSON &object)
 		{
 			bool first = true;
@@ -270,13 +286,17 @@ namespace JSON
 				append('"');
 				append(key);
 				append("\":", 2);
-				write_value(p.Get());
+
+				if (stringify_enhanced)
+					write_value_enhanced(p.Get(), p.Key());
+				else
+					write_value(p.Get());
 			}
 			append('}');
 		}
 
 	public:
-		StringBuilderArray(int d = JSON_DICT_FULL) : dict(d) {}
+		StringBuilder(int d = JSON_DICT_FULL) : dict(d) {}
 
 		int stringify(const JSON &object, char *buffer, int length, const char *suffix = nullptr)
 		{
@@ -294,5 +314,7 @@ namespace JSON
 		}
 
 		void setMap(int d) { dict = d; }
+		void setStringifyEnhanced(bool enhanced) { stringify_enhanced = enhanced; }
+		bool getStringifyEnhanced() const { return stringify_enhanced; }
 	};
 }

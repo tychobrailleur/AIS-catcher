@@ -263,45 +263,41 @@ namespace JSON
 		size_t stringCount = 0;
 		size_t arrayCount = 0;
 
+		template <typename T>
+		T &acquire(std::deque<T> &pool, size_t &count)
+		{
+			if (count >= pool.size())
+				pool.emplace_back();
+			return pool[count++];
+		}
+
 	public:
 		JSON *addObject()
 		{
-			if (objectCount < objects.size())
-				objects[objectCount].clear();
-			else
-				objects.emplace_back();
-			return &objects[objectCount++];
+			auto &obj = acquire(objects, objectCount);
+			obj.clear();
+			return &obj;
 		}
 
 		std::string *addString(const std::string &v)
 		{
-			if (stringCount < strings.size())
-				strings[stringCount] = v;
-			else
-				strings.push_back(v);
-			return &strings[stringCount++];
+			auto &s = acquire(strings, stringCount);
+			s = v;
+			return &s;
 		}
 
 		std::string *addString(const char *data, size_t len)
 		{
-			if (stringCount < strings.size())
-				strings[stringCount].assign(data, len);
-			else
-				strings.emplace_back(data, len);
-			return &strings[stringCount++];
+			auto &s = acquire(strings, stringCount);
+			s.assign(data, len);
+			return &s;
 		}
 
 		std::vector<Value> *addArray()
 		{
-			if (arrayCount < arrays.size())
-			{
-				arrays[arrayCount].clear();
-			}
-			else
-			{
-				arrays.push_back(std::vector<Value>());
-			}
-			return &arrays[arrayCount++];
+			auto &arr = acquire(arrays, arrayCount);
+			arr.clear();
+			return &arr;
 		}
 
 		void clear()

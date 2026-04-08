@@ -59,6 +59,7 @@
 #include "Convert.h"
 #include "Common.h"
 #include "OutputStats.h"
+#include "Keys.h"
 
 namespace Protocol
 {
@@ -214,7 +215,7 @@ namespace Protocol
 			return p;
 		}
 
-		virtual bool setValue(const std::string &key, const std::string &value) { return false; }
+		virtual bool setOptionKey(AIS::Keys key, const std::string &value) { return false; }
 		virtual std::string getValues() { return ""; }
 	};
 
@@ -246,23 +247,31 @@ namespace Protocol
 			return state == READY;
 		}
 
-		bool setValue(const std::string &key, const std::string &value) override
+		bool setOptionKey(AIS::Keys key, const std::string &value) override
 		{
-			if (key == "HOST")
+			switch (key)
+			{
+			case AIS::KEY_SETTING_HOST:
 				host = value;
-			else if (key == "PORT")
+				break;
+			case AIS::KEY_SETTING_PORT:
 				port = value;
-			else if (key == "RESET")
-				reset_time = Util::Parse::Integer(value, 0, 3600, key);
-			else if (key == "PERSISTENT")
+				break;
+			case AIS::KEY_SETTING_RESET:
+				reset_time = Util::Parse::Integer(value, 0, 3600);
+				break;
+			case AIS::KEY_SETTING_PERSIST:
 				persistent = Util::Parse::Switch(value);
-			else if (key == "TIMEOUT")
+				break;
+			case AIS::KEY_SETTING_TIMEOUT:
 				timeout = std::stoi(value);
-			else if (key == "KEEP_ALIVE")
+				break;
+			case AIS::KEY_SETTING_KEEP_ALIVE:
 				keep_alive = Util::Parse::Switch(value);
-			else
+				break;
+			default:
 				return false;
-
+			}
 			return true;
 		}
 
@@ -457,7 +466,7 @@ namespace Protocol
 		MQTT() : ProtocolBase("MQTT") {};
 		void onConnect() override;
 		void onDisconnect() override;
-		bool setValue(const std::string &key, const std::string &value) override;
+		bool setOptionKey(AIS::Keys key, const std::string &value) override;
 		bool isConnected() override;
 		int send(const void *str, int length, const std::string &tpc);
 		int send(const void *str, int length) override;
@@ -576,36 +585,32 @@ namespace Protocol
 			return 0;
 		}
 
-		bool setValue(const std::string &key, const std::string &value) override
+		bool setOptionKey(AIS::Keys key, const std::string &value) override
 		{
-			if (key == "TUNER")
+			switch (key)
+			{
+			case AIS::KEY_SETTING_TUNER:
 			{
 				double temp;
 				tuner_AGC = Util::Parse::AutoFloat(value, 0, 50, temp);
 				tuner_Gain = (FLOAT32)temp;
+				break;
 			}
-			else if (key == "RTLAGC")
-			{
+			case AIS::KEY_SETTING_RTLAGC:
 				RTL_AGC = Util::Parse::Switch(value);
-			}
-			else
-			{
-				if (key == "RATE" || key == "SAMPLE_RATE")
-				{
-					sample_rate = ((Util::Parse::Integer(value, 0, 20000000)));
-				}
-				else if (key == "FREQOFFSET")
-				{
-					freq_offset = Util::Parse::Float(value, -150, 150);
-				}
-				else if (key == "FREQUENCY")
-				{
-					frequency = Util::Parse::Integer(value, 0, 2000000000);
-				}
-
+				break;
+			case AIS::KEY_SETTING_SAMPLE_RATE:
+				sample_rate = Util::Parse::Integer(value, 0, 20000000);
+				return false;
+			case AIS::KEY_SETTING_FREQOFFSET:
+				freq_offset = Util::Parse::Float(value, -150, 150);
+				return false;
+			case AIS::KEY_SETTING_FREQUENCY:
+				frequency = Util::Parse::Integer(value, 0, 2000000000);
+				return false;
+			default:
 				return false;
 			}
-
 			return true;
 		}
 
@@ -664,7 +669,7 @@ namespace Protocol
 		int send(const void *data, int length) override;
 		int read(void *data, int length, int t = 1, bool wait = false) override;
 
-		bool setValue(const std::string &key, const std::string &value) override;
+		bool setOptionKey(AIS::Keys key, const std::string &value) override;
 		std::string getValues() override;
 	};
 }

@@ -8,6 +8,9 @@ var interval,
     overlapmaps = {},
     station = {},
     shipsDB = {},
+    shipsSince = 0,
+    shipsTimeout = 1800,
+    shipsLastCleanup = 0,
     binaryDB = {},
     planesDB = {},
     fetch_binary = false,
@@ -2198,7 +2201,7 @@ function updateTablecard() {
         distance: (a, b) => compareNumber(shipsDB[a].raw.distance, shipsDB[b].raw.distance),
         speed: (a, b) => compareNumber(shipsDB[a].raw.speed, shipsDB[b].raw.speed),
         type: (a, b) => compareNumber(shipsDB[a].raw.shipclass, shipsDB[b].raw.shipclass),
-        last_signal: (a, b) => compareNumber(shipsDB[a].raw.last_signal, shipsDB[b].raw.last_signal),
+        last_signal: (a, b) => compareNumber(shipsDB[b].raw.last_signal, shipsDB[a].raw.last_signal),
     };
 
     if (column in sortFunctions) {
@@ -2231,7 +2234,7 @@ function updateTablecard() {
             `<td title="${distTitle}">${dist}</td>` +
             `<td title="${spdTitle}">${spd}</td>` +
             `<td>${getTableShiptype(ship)}</td>` +
-            `<td>${getDeltaTimeVal(ship.last_signal)}</td>` +
+            `<td>${getDeltaTimeVal(shipsSince - ship.last_signal)}</td>` +
             `</tr>`);
         addedRows++;
     }
@@ -2702,7 +2705,7 @@ async function fetchShips(noDoubleFetch = true) {
     isFetchingShips = true;
     let response;
     try {
-        response = await fetch("api/ships_array.json?receiver=" + activeReceiver);
+        response = await fetch("api/ships_array.json?receiver=" + activeReceiver + (shipsSince > 0 ? "&since=" + shipsSince : ""));
     } catch (error) {
 
         console.log("failed loading ships: " + error);
@@ -2714,82 +2717,96 @@ async function fetchShips(noDoubleFetch = true) {
 
 
 
-    const keys = [
-        "mmsi",
-        "lat",
-        "lon",
-        "distance",
-        "bearing",
-        "level",
-        "count",
-        "ppm",
-        "approx",
-        "heading",
-        "cog",
-        "speed",
-        "to_bow",
-        "to_stern",
-        "to_starboard",
-        "to_port",
-        "last_group",
-        "group_mask",
-        "shiptype",
-        "mmsi_type",
-        "shipclass",
-        "msg_type",
-        "country",
-        "status",
-        "draught",
-        "eta_month",
-        "eta_day",
-        "eta_hour",
-        "eta_minute",
-        "imo",
-        "callsign",
-        "shipname",
-        "destination",
-        "last_signal",
-        "flags",
-        "validated",
-        "channels",
-        "altitude",
-        "received_stations"
+    const dynamicKeys = [
+        "mmsi", "lat", "lon", "distance", "bearing",
+        "heading", "cog", "speed", "status", "level", "ppm",
+        "count", "msg_type", "last_signal", "last_group", "group_mask",
+        "flags", "altitude", "received_stations",
+        "mmsi_type", "shipclass", "country"
     ];
 
-    shipsDB = {};
-    station = {};
+    const staticKeys = [
+        "mmsi", "shipname", "callsign", "destination",
+        "shiptype", "imo",
+        "to_bow", "to_stern", "to_port", "to_starboard",
+        "draught", "eta_month", "eta_day", "eta_hour", "eta_minute"
+    ];
 
-    ships.values.forEach((v) => {
-        const s = Object.fromEntries(keys.map((k, i) => [k, v[i]]));
+    const serverTime = ships.time || 0;
+    const isIncremental = shipsSince > 0;
 
-        const flags = s.flags;
-        s.validated2 = (flags & 3) == 2 ? -1 : flags & 3;
+    if (!isIncremental) {
+        shipsDB = {};
+        station = {};
+    }
 
-
-        s.repeat = (flags >> 2) & 3;
-        s.virtual_aid = (flags >> 4) & 1;
-        s.approximate = (flags >> 5) & 1;
-        s.channels2 = (flags >> 6) & 0b1111;
-        s.cs_unit = (flags >> 10) & 3; // 0=unknown, 1=SOTDMA, 2=Carrier Sense
-        s.raim = (flags >> 12) & 3; // 0=unknown, 1=false, 2=true
-        s.dte = (flags >> 14) & 3; // 0=unknown, 1=ready, 2=not ready
-        s.assigned = (flags >> 16) & 3; // 0=unknown, 1=autonomous, 2=assigned
-        s.display = (flags >> 18) & 3; // 0=unknown, 1=false, 2=true
-        s.dsc = (flags >> 20) & 3; // 0=unknown, 1=false, 2=true
-        s.band = (flags >> 22) & 3; // 0=unknown, 1=false, 2=true
-        s.msg22 = (flags >> 24) & 3; // 0=unknown, 1=false, 2=true
-        s.off_position = (flags >> 26) & 3; // 0=unknown, 1=on position, 2=off position
-        s.maneuver = (flags >> 28) & 3; // 0=not available, 1=no special, 2=special
-
-        if (includeShip(s)) {
+    // Process static data first (name/voyage)
+    if (ships.static) {
+        ships.static.forEach((v) => {
+            const s = Object.fromEntries(staticKeys.map((k, i) => [k, v[i]]));
             s.shipname = sanitizeString(s.shipname);
             s.callsign = sanitizeString(s.callsign);
+            const mmsi = s.mmsi;
+            if (mmsi in shipsDB) {
+                Object.assign(shipsDB[mmsi].raw, s);
+            } else {
+                shipsDB[mmsi] = { raw: s };
+            }
+        });
+    }
 
-            const entry = {};
-            entry.raw = s;
-            shipsDB[s.mmsi] = entry;
+    // Process dynamic data (position/signal)
+    if (ships.dynamic) {
+        ships.dynamic.forEach((v) => {
+            const s = Object.fromEntries(dynamicKeys.map((k, i) => [k, v[i]]));
+
+            const flags = s.flags;
+            s.validated = flags & 3;
+            s.validated2 = (flags & 3) == 2 ? -1 : flags & 3;
+            s.repeat = (flags >> 2) & 3;
+            s.virtual_aid = (flags >> 4) & 1;
+            s.approx = (flags >> 5) & 1;
+            s.approximate = s.approx;
+            s.channels = (flags >> 6) & 0b1111;
+            s.channels2 = (flags >> 6) & 0b1111;
+            s.cs_unit = (flags >> 10) & 3;
+            s.raim = (flags >> 12) & 3;
+            s.dte = (flags >> 14) & 3;
+            s.assigned = (flags >> 16) & 3;
+            s.display = (flags >> 18) & 3;
+            s.dsc = (flags >> 20) & 3;
+            s.band = (flags >> 22) & 3;
+            s.msg22 = (flags >> 24) & 3;
+            s.off_position = (flags >> 26) & 3;
+            s.maneuver = (flags >> 28) & 3;
+
+            const mmsi = s.mmsi;
+            if (mmsi in shipsDB) {
+                Object.assign(shipsDB[mmsi].raw, s);
+            } else {
+                shipsDB[mmsi] = { raw: s };
+            }
+        });
+    }
+
+    // Filter ships after merge
+    for (const mmsi in shipsDB) {
+        if (!includeShip(shipsDB[mmsi].raw)) {
+            delete shipsDB[mmsi];
         }
-    });
+    }
+
+    if (ships.timeout) shipsTimeout = ships.timeout;
+    shipsSince = serverTime;
+
+    // periodically expire ships older than timeout
+    if (isIncremental && serverTime - shipsLastCleanup > shipsTimeout / 2) {
+        for (const mmsi in shipsDB) {
+            if (serverTime - shipsDB[mmsi].raw.last_signal > shipsTimeout)
+                delete shipsDB[mmsi];
+        }
+        shipsLastCleanup = serverTime;
+    }
 
     if (ships.hasOwnProperty("station")) station = ships.station;
 
@@ -2801,7 +2818,7 @@ async function fetchShips(noDoubleFetch = true) {
         center = { lat: ship.lat, lon: ship.lon };
     }
 
-    tab_title_count = ships.values.length;
+    tab_title_count = Object.keys(shipsDB).length;
     updateTitle();
 
     return true;
@@ -3594,6 +3611,7 @@ function closeReceiverDropdown() {
 
 function onReceiverChange(idx) {
     activeReceiver = parseInt(idx, 10) || 0;
+    shipsSince = 0;
     const btn = document.getElementById("receiver-btn");
     if (btn) btn.classList.toggle("active", activeReceiver !== 0);
     refresh_data();
@@ -3937,7 +3955,7 @@ function customShipFilter(data, filterParams) {
         data.mmsi.toString().includes(query) ||
         data.callsign.toLowerCase().includes(query) ||
         data.shipclass.toString().includes(query) ||
-        (data.last_signal != null && getDeltaTimeVal(data.last_signal).includes(query)) ||
+        (data.last_signal != null && getDeltaTimeVal(shipsSince - data.last_signal).includes(query)) ||
         (data.count != null && data.count.toString().includes(query)) ||
         (data.ppm != null && data.ppm.toString().includes(query)) ||
         (data.level != null && data.level.toString().includes(query)) ||
@@ -3981,12 +3999,12 @@ async function updateShipTable() {
                     sorter: "string",
                     formatter: function (cell) {
                         const ship = cell.getRow().getData();
-                        return getFlag(ship.country) + getShipName(ship);
+                        return getFlag(ship.country) + (getShipName(ship) || ship.mmsi);
                     },
                 },
                 { title: "MMSI", field: "mmsi", sorter: "number" },
-                { title: "IMO", field: "imo", sorter: "number" },
-                { title: "Dest", field: "destination", sorter: "string" },
+                { title: "IMO", field: "imo", sorter: "number", formatter: function(cell) { var v = cell.getValue(); return v != null ? v : ""; } },
+                { title: "Dest", field: "destination", sorter: "string", formatter: function(cell) { var v = cell.getValue(); return v != null ? v : ""; } },
                 {
                     title: "ETA",
                     field: "eta",
@@ -4065,7 +4083,7 @@ async function updateShipTable() {
                     sorter: "number",
                     formatter: function (cell) {
                         const value = cell.getValue();
-                        return value != null ? getDeltaTimeVal(value) : "";
+                        return value != null ? getDeltaTimeVal(shipsSince - value) : "";
                     },
                 },
                 { title: "Count", field: "count", sorter: "number" },
@@ -4334,7 +4352,7 @@ function getTooltipContent(ship) {
         getFlagStyled(ship.country, "padding: 0px; margin: 0px; margin-right: 10px; margin-left: 3px; box-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2); font-size: 26px; opacity: 70%") +
         '<div>' +
         (getShipName(ship) || ship.mmsi) + ' at ' + getSpeedVal(ship.speed) + ' ' + getSpeedUnit() + '<br>' +
-        'Received ' + getDeltaTimeVal(ship.last_signal) + ' ago' +
+        'Received ' + getDeltaTimeVal(shipsSince - ship.last_signal) + ' ago' +
         '</div>' +
         '</div>';
 
@@ -4390,7 +4408,7 @@ function getTypeVal(ship) {
 function getShipOpacity(ship) {
     if (settings.fading == false) return 1;
 
-    let opacity = 1 - (ship.last_signal / 1800) * 0.8;
+    let opacity = 1 - ((shipsSince - ship.last_signal) / 1800) * 0.8;
     return Math.max(0.2, Math.min(1, opacity));
 }
 
@@ -5344,7 +5362,7 @@ function populateShipcard() {
     setShipcardValidation(ship.validated);
 
     // verbatim copies
-    ["destination", "mmsi", "count", "imo", "received_stations"].forEach((e) => (document.getElementById("shipcard_" + e).innerHTML = ship[e]));
+    ["destination", "mmsi", "count", "imo", "received_stations"].forEach((e) => (document.getElementById("shipcard_" + e).innerHTML = ship[e] != null ? ship[e] : "-"));
 
     // round and add units
     [
@@ -5366,7 +5384,7 @@ function populateShipcard() {
     document.getElementById("shipcard_type").innerHTML = getTypeVal(ship) + ' <i class="info_icon shipcard-tech-icon" id="shipcard_tech_info" onclick="event.stopPropagation(); toggleTechPopover()" title="Technical details"></i>';
     document.getElementById("shipcard_shiptype").innerHTML = getShipTypeVal(ship.shiptype);
     document.getElementById("shipcard_status").innerHTML = getStatusVal(ship);
-    document.getElementById("shipcard_last_signal").innerHTML = getDeltaTimeVal(ship.last_signal);
+    document.getElementById("shipcard_last_signal").innerHTML = getDeltaTimeVal(shipsSince - ship.last_signal);
     document.getElementById("shipcard_eta").innerHTML = ship.eta_month != null && ship.eta_hour != null && ship.eta_day != null && ship.eta_minute != null ? getEtaVal(ship) : null;
     document.getElementById("shipcard_lat").innerHTML = ship.lat ? getLatValFormat(ship) : null;
     document.getElementById("shipcard_lon").innerHTML = ship.lon ? getLonValFormat(ship) : null;
@@ -7448,7 +7466,7 @@ function selectRandomShipForKiosk() {
 
     const weights = finalCandidates.map(mmsi => {
         const ship = shipsDB[mmsi].raw;
-        const timeSinceUpdate = ship.last_signal || 3600;
+        const timeSinceUpdate = (shipsSince - ship.last_signal) || 3600;
 
         // Higher weight for more recently updated ships
         if (timeSinceUpdate < 60) return 10;

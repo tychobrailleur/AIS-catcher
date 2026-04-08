@@ -55,7 +55,6 @@ namespace IO
 	class HTTPStreamer : public OutputMessage
 	{
 
-		JSON::StringBuilder builder;
 		HTTPClient http;
 
 		std::string json;
@@ -97,7 +96,7 @@ namespace IO
 
 	public:
 		~HTTPStreamer() { Stop(); }
-		HTTPStreamer() : OutputMessage("HTTP"), builder(JSON_DICT_FULL), url("http://127.0.0.1"), userpwd("") { fmt = MessageFormat::JSON_FULL; }
+		HTTPStreamer() : OutputMessage("HTTP"), url("http://127.0.0.1"), userpwd("") { fmt = MessageFormat::JSON_FULL; }
 
 		Setting &SetKey(AIS::Keys key, const std::string &arg) override;
 

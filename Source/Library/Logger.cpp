@@ -122,7 +122,7 @@ std::string LogMessage::levelToString() const
 std::string LogMessage::toJSON() const
 {
 	std::string msg;
-	JSON::StringBuilder::stringify(message, msg);
+	JSON::stringify(message, msg);
 
 	return "{\"level\":\"" + levelToString() + "\",\"message\":" + msg + ",\"time\":\"" + time + "\"}";
 }

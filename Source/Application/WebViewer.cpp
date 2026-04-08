@@ -34,12 +34,12 @@ PluginManager::PluginManager()
 
 void PluginManager::setContext(const std::string &ctx)
 {
-	plugin_preamble += "context=" + JSON::StringBuilder::stringify(ctx) + ";\n";
+	plugin_preamble += "context=" + JSON::stringify(ctx) + ";\n";
 }
 
 void PluginManager::setWebControl(const std::string &url)
 {
-	plugin_preamble += "webcontrol_http = " + JSON::StringBuilder::stringify(url) + ";\n";
+	plugin_preamble += "webcontrol_http = " + JSON::stringify(url) + ";\n";
 }
 
 void PluginManager::setShareLoc(bool b)
@@ -82,7 +82,7 @@ void PluginManager::setReceivers(const std::vector<std::unique_ptr<ReceiverTrack
 			if (i)
 				params += ",";
 			params += "{\"idx\":" + std::to_string(i) + ",\"label\":";
-			JSON::StringBuilder::stringify(states[i]->label, params);
+			JSON::stringify(states[i]->label, params);
 			params += "}";
 		}
 		params += "];\n";
@@ -97,7 +97,7 @@ void PluginManager::addPlugin(const std::string &arg)
 {
 	int version = 0;
 	std::string author, description;
-	std::string safe_arg = JSON::StringBuilder::stringify(arg);
+	std::string safe_arg = JSON::stringify(arg);
 
 	plugin_preamble += "console.log('plugin:' + " + safe_arg + ");";
 	plugin_preamble += "plugins += 'JS: ' + " + safe_arg + " + '\\n';";
@@ -142,7 +142,7 @@ void PluginManager::addPlugin(const std::string &arg)
 	{
 		plugin_preamble += "// FAILED\n";
 		Warning() << "Server: Plugin \"" + arg + "\" ignored - JS plugin error : " << e.what();
-		plugin_preamble += "server_message += 'Plugin error: ' + " + safe_arg + " + ': ' + " + JSON::StringBuilder::stringify(std::string(e.what())) + " + '\\n';\n";
+		plugin_preamble += "server_message += 'Plugin error: ' + " + safe_arg + " + ': ' + " + JSON::stringify(std::string(e.what())) + " + '\\n';\n";
 	}
 }
 
@@ -154,7 +154,7 @@ void PluginManager::addPluginCode(const std::string &code)
 void PluginManager::addStyle(const std::string &arg)
 {
 	Info() << "Server: adding plugin (CSS): " << arg;
-	std::string safe_arg = JSON::StringBuilder::stringify(arg);
+	std::string safe_arg = JSON::stringify(arg);
 	plugin_preamble += "console.log('css:' + " + safe_arg + ");";
 	plugin_preamble += "plugins += 'CSS: ' + " + safe_arg + " + '\\n';";
 
@@ -168,7 +168,7 @@ void PluginManager::addStyle(const std::string &arg)
 	{
 		stylesheets += "/* FAILED */\r\n";
 		Warning() << "Server: style plugin error - " << e.what();
-		plugin_preamble += "server_message += 'Plugin error: ' + " + safe_arg + " + ': ' + " + JSON::StringBuilder::stringify(std::string(e.what())) + " + '\\n';\n";
+		plugin_preamble += "server_message += 'Plugin error: ' + " + safe_arg + " + ': ' + " + JSON::stringify(std::string(e.what())) + " + '\\n';\n";
 	}
 }
 
@@ -251,7 +251,7 @@ void SSEStreamer::Receive(const JSON::JSON *data, int len, TAG &tag)
 							   ",\"timestamp\":" + std::to_string(now) +
 							   ",\"channel\":\"" + m->getChannel() +
 							   "\",\"type\":" + std::to_string(m->type()) +
-							   ",\"shipname\":" + JSON::StringBuilder::stringify(std::string(tag.shipname)) +
+							   ",\"shipname\":" + JSON::stringify(std::string(tag.shipname)) +
 							   ",\"nmea\":" + nmea_array + "}";
 			server->sendSSE(1, "nmea", json);
 		}
@@ -266,8 +266,8 @@ void SSEStreamer::Receive(const JSON::JSON *data, int len, TAG &tag)
 
 WebViewer::WebViewer() : Setting("WebViewer")
 {
-	os = JSON::StringBuilder::stringify(Util::Helper::getOS());
-	hardware = JSON::StringBuilder::stringify(Util::Helper::getHardware());
+	os = JSON::stringify(Util::Helper::getOS());
+	hardware = JSON::stringify(Util::Helper::getHardware());
 }
 
 std::string WebViewer::decodeNMEAtoJSON(const std::string &nmea_input, bool enhanced)
@@ -279,6 +279,7 @@ std::string WebViewer::decodeNMEAtoJSON(const std::string &nmea_input, bool enha
 		AIS::NMEA nmea_decoder;
 		AIS::JSONAIS json_converter;
 		JSON::StringBuilder *builder;
+		char jsonBuf[4096];
 		std::string result;
 		bool first;
 		size_t message_count;
@@ -304,7 +305,8 @@ std::string WebViewer::decodeNMEAtoJSON(const std::string &nmea_input, bool enha
 					result += ",";
 
 				first = false;
-				builder->stringify(data[i], result);
+				int n = builder->stringify(data[i], jsonBuf, sizeof(jsonBuf));
+				result.append(jsonBuf, n);
 				message_count++;
 			}
 		}
@@ -628,9 +630,9 @@ std::string ReceiverTracker::toCountersJSON()
 
 void ReceiverTracker::setDevice(Device::Device *device)
 {
-	product = JSON::StringBuilder::stringify(device->getProduct(), false);
-	vendor = JSON::StringBuilder::stringify(device->getVendor().empty() ? "-" : device->getVendor(), false);
-	serial = JSON::StringBuilder::stringify(device->getSerial().empty() ? "-" : device->getSerial(), false);
+	product = JSON::stringify(device->getProduct(), false);
+	vendor = JSON::stringify(device->getVendor().empty() ? "-" : device->getVendor(), false);
+	serial = JSON::stringify(device->getSerial().empty() ? "-" : device->getSerial(), false);
 	sample_rate = device->getRateDescription();
 
 	if (serial == ".")
@@ -645,9 +647,9 @@ void ReceiverTracker::setDevice(Device::Device *device)
 
 void ReceiverTracker::appendDevice(Device::Device *device, const std::string &newline)
 {
-	product += JSON::StringBuilder::stringify(device->getProduct(), false) + newline;
-	vendor += JSON::StringBuilder::stringify(device->getVendor().empty() ? "-" : device->getVendor(), false) + newline;
-	serial += JSON::StringBuilder::stringify(device->getSerial().empty() ? "-" : device->getSerial(), false) + newline;
+	product += JSON::stringify(device->getProduct(), false) + newline;
+	vendor += JSON::stringify(device->getVendor().empty() ? "-" : device->getVendor(), false) + newline;
+	serial += JSON::stringify(device->getSerial().empty() ? "-" : device->getSerial(), false) + newline;
 	sample_rate += device->getRateDescription() + newline;
 }
 
@@ -765,9 +767,9 @@ void WebViewer::connect(AIS::Model &m, Connection<JSON::JSON> &json, Device::Dev
 		device >> raw_counter;
 
 		states[0]->sample_rate = device.getRateDescription();
-		states[0]->product = JSON::StringBuilder::stringify(device.getProduct(), false);
-		states[0]->vendor = JSON::StringBuilder::stringify(device.getVendor().empty() ? "-" : device.getVendor(), false);
-		states[0]->serial = JSON::StringBuilder::stringify(device.getSerial().empty() ? "-" : device.getSerial(), false);
+		states[0]->product = JSON::stringify(device.getProduct(), false);
+		states[0]->vendor = JSON::stringify(device.getVendor().empty() ? "-" : device.getVendor(), false);
+		states[0]->serial = JSON::stringify(device.getSerial().empty() ? "-" : device.getSerial(), false);
 		states[0]->model_name = m.getName();
 	}
 }
@@ -969,8 +971,9 @@ const WebViewer::Route WebViewer::routes[] = {
 	 [](WebViewer *, ReceiverTracker *s, const std::string &)
 	 { return s ? s->getShipsJSON(true) : std::string("{}"); }},
 	{"/api/ships_array.json", nullptr, "application/json",
-	 [](WebViewer *, ReceiverTracker *s, const std::string &)
-	 { return s ? s->getShipsJSONcompact() : std::string("{}"); }},
+	 [](WebViewer *w, ReceiverTracker *s, const std::string &a)
+	 { std::time_t since = w->parseSinceParam(a);
+	   return s ? s->getShipsJSONcompact(since) : std::string("{}"); }},
 	{"/api/planes_array.json", nullptr, "application/json",
 	 [](WebViewer *w, ReceiverTracker *, const std::string &)
 	 { return w->planes.getCompactArray(); }},
@@ -1208,11 +1211,11 @@ Setting &WebViewer::SetKey(AIS::Keys key, const std::string &arg)
 		firstport = MIN(firstport, lastport);
 		break;
 	case AIS::KEY_SETTING_STATION:
-		station = JSON::StringBuilder::stringify(arg);
+		station = JSON::stringify(arg);
 		pluginManager.setStation(station);
 		break;
 	case AIS::KEY_SETTING_STATION_LINK:
-		station_link = JSON::StringBuilder::stringify(arg);
+		station_link = JSON::stringify(arg);
 		break;
 	case AIS::KEY_SETTING_WEBCONTROL_HTTP:
 		pluginManager.setWebControl(arg);

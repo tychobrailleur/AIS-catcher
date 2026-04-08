@@ -227,20 +227,18 @@ namespace Util
 		}
 	}
 
-	bool WriteWAV::setValue(std::string option, std::string arg)
+	bool WriteWAV::setOptionKey(AIS::Keys key, const std::string &arg)
 	{
-		Util::Convert::toUpper(option);
-
-		if (option == "FILE")
+		switch (key)
 		{
+		case AIS::KEY_SETTING_FILE:
 			filename = arg;
 			return true;
-		}
-		else if (option == "RATE")
-		{
-			sample_rate = Util::Parse::Integer(arg, 0, 1000000000, "RATE");
+		case AIS::KEY_SETTING_SAMPLE_RATE:
+			sample_rate = Util::Parse::Integer(arg, 0, 1000000000);
 			return true;
+		default:
+			return false;
 		}
-		return false;
 	}
 }

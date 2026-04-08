@@ -188,9 +188,9 @@ void DeviceManager::printAvailableDevices(bool JSON)
 			std::string name = type + " [" + serial + "]";
 
 			// Properly escape JSON strings
-			std::string type_escaped = JSON::StringBuilder::stringify(type, false);
-			std::string serial_escaped = JSON::StringBuilder::stringify(serial, false);
-			std::string name_escaped = JSON::StringBuilder::stringify(name, false);
+			std::string type_escaped = JSON::stringify(type, false);
+			std::string serial_escaped = JSON::stringify(serial, false);
+			std::string name_escaped = JSON::stringify(name, false);
 
 			std::cout << "{\"input\":\"" + type_escaped;
 			std::cout << "\",\"serial\":\"" + serial_escaped;

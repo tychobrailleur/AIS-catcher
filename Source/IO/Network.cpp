@@ -89,7 +89,7 @@ namespace IO
 				}
 				else
 				{
-					int n = fastBuilder.stringify(data[i], jsonBuf, sizeof(jsonBuf));
+					int n = builder.stringify(data[i], jsonBuf, sizeof(jsonBuf));
 					{
 						const std::lock_guard<std::mutex> lock(msg_list_mutex);
 						msg_list.push_back(std::string(jsonBuf, n));
@@ -200,7 +200,7 @@ namespace IO
 		{
 		case AIS::KEY_SETTING_URL:
 			url = arg;
-			url_json = JSON::StringBuilder::stringify(arg);
+			url_json = JSON::stringify(arg);
 			http.setURL(url);
 			break;
 		case AIS::KEY_SETTING_USERPWD:
@@ -209,7 +209,7 @@ namespace IO
 			break;
 		case AIS::KEY_SETTING_ID:
 		case AIS::KEY_SETTING_CALLSIGN:
-			stationid = JSON::StringBuilder::stringify(arg);
+			stationid = JSON::stringify(arg);
 			break;
 		case AIS::KEY_SETTING_INTERVAL:
 			INTERVAL = Util::Parse::Integer(arg, 1, 60 * 60 * 24);
@@ -218,19 +218,19 @@ namespace IO
 			TIMEOUT = Util::Parse::Integer(arg, 1, 30);
 			break;
 		case AIS::KEY_SETTING_MODEL:
-			model = JSON::StringBuilder::stringify(arg);
+			model = JSON::stringify(arg);
 			break;
 		case AIS::KEY_SETTING_MODEL_SETTING:
-			model_setting = JSON::StringBuilder::stringify(arg);
+			model_setting = JSON::stringify(arg);
 			break;
 		case AIS::KEY_SETTING_PRODUCT:
-			product = JSON::StringBuilder::stringify(arg);
+			product = JSON::stringify(arg);
 			break;
 		case AIS::KEY_SETTING_VENDOR:
-			vendor = JSON::StringBuilder::stringify(arg);
+			vendor = JSON::stringify(arg);
 			break;
 		case AIS::KEY_SETTING_SERIAL:
-			serial = JSON::StringBuilder::stringify(arg);
+			serial = JSON::stringify(arg);
 			break;
 		case AIS::KEY_SETTING_LAT:
 			lat = std::to_string(Util::Parse::Float(arg));
@@ -239,7 +239,7 @@ namespace IO
 			lon = std::to_string(Util::Parse::Float(arg));
 			break;
 		case AIS::KEY_SETTING_DEVICE_SETTING:
-			device_setting = JSON::StringBuilder::stringify(arg);
+			device_setting = JSON::stringify(arg);
 			break;
 		case AIS::KEY_SETTING_GZIP:
 			gzip = Util::Parse::Switch(arg);
@@ -256,7 +256,6 @@ namespace IO
 
 			if (a == "AISCATCHER")
 			{
-				builder.setMap(JSON_DICT_FULL);
 				protocol_string = "jsonaiscatcher";
 				protocol = PROTOCOL::AISCATCHER;
 			}
@@ -276,7 +275,6 @@ namespace IO
 			}
 			else if (a == "LIST")
 			{
-				builder.setMap(JSON_DICT_FULL);
 				protocol = PROTOCOL::LIST;
 			}
 			else if (a == "NMEA")
@@ -414,7 +412,7 @@ namespace IO
 		{
 			if (filter.include(*(AIS::Message *)data[i].binary))
 			{
-				int n = fastBuilder.stringify(data[i], jsonBuf, sizeof(jsonBuf), "\r\n");
+				int n = builder.stringify(data[i], jsonBuf, sizeof(jsonBuf), "\r\n");
 				SendTo(jsonBuf, n);
 			}
 		}
@@ -670,7 +668,7 @@ namespace IO
 		{
 			if (filter.include(*(AIS::Message *)data[i].binary))
 			{
-				int n = fastBuilder.stringify(data[i], jsonBuf, sizeof(jsonBuf), "\r\n");
+				int n = builder.stringify(data[i], jsonBuf, sizeof(jsonBuf), "\r\n");
 				if (SendTo(jsonBuf, n) < 0)
 					if (!persistent)
 					{
@@ -700,11 +698,11 @@ namespace IO
 
 		// Set up TCP connection
 		tcp.setStats(&stats);
-		tcp.setValue("HOST", host);
-		tcp.setValue("PORT", port);
-		tcp.setValue("PERSISTENT", Util::Convert::toString(persistent));
-		tcp.setValue("TIMEOUT", "0");
-		tcp.setValue("KEEP_ALIVE", Util::Convert::toString(keep_alive));
+		tcp.setOptionKey(AIS::KEY_SETTING_HOST, host);
+		tcp.setOptionKey(AIS::KEY_SETTING_PORT, port);
+		tcp.setOptionKey(AIS::KEY_SETTING_PERSIST, Util::Convert::toString(persistent));
+		tcp.setOptionKey(AIS::KEY_SETTING_TIMEOUT, "0");
+		tcp.setOptionKey(AIS::KEY_SETTING_KEEP_ALIVE, Util::Convert::toString(keep_alive));
 
 		connection = &tcp;
 
@@ -880,7 +878,7 @@ namespace IO
 		{
 			if (filter.include(*(AIS::Message *)data[i].binary))
 			{
-				int n = fastBuilder.stringify(data[i], jsonBuf, sizeof(jsonBuf), "\r\n");
+				int n = builder.stringify(data[i], jsonBuf, sizeof(jsonBuf), "\r\n");
 				SendAllDirect(jsonBuf, n);
 			}
 		}
@@ -899,7 +897,7 @@ namespace IO
 		std::string filter_str = filter.Get();
 		if (!filter_str.empty())
 			ss << ", " << filter_str;
-		tcp.setValue("PERSISTENT", "on");
+		tcp.setOptionKey(AIS::KEY_SETTING_PERSIST, "on");
 		tcp.setStats(&stats);
 		tls.setStats(&stats);
 
@@ -924,8 +922,8 @@ namespace IO
 			session = tcp.add(&ws);
 			session = ws.add(&mqtt);
 
-			ws.setValue("PROTOCOLS", "mqtt");
-			ws.setValue("BINARY", "on");
+			ws.setOptionKey(AIS::KEY_SETTING_PROTOCOLS, "mqtt");
+			ws.setOptionKey(AIS::KEY_SETTING_BINARY, "on");
 			break;
 		case PROTOCOL::WSSMQTT:
 
@@ -933,8 +931,8 @@ namespace IO
 			session = tls.add(&ws);
 			session = ws.add(&mqtt);
 
-			ws.setValue("PROTOCOLS", "mqtt");
-			ws.setValue("BINARY", "on");
+			ws.setOptionKey(AIS::KEY_SETTING_PROTOCOLS, "mqtt");
+			ws.setOptionKey(AIS::KEY_SETTING_BINARY, "on");
 			break;
 		default:
 			break;
@@ -982,7 +980,7 @@ namespace IO
 		{
 			if (filter.include(*(AIS::Message *)data[i].binary))
 			{
-				int n = fastBuilder.stringify(data[i], jsonBuf, sizeof(jsonBuf), "\n");
+				int n = builder.stringify(data[i], jsonBuf, sizeof(jsonBuf), "\n");
 				((Protocol::MQTT *)session)->send(jsonBuf, n, topic_template.get(tag, *((AIS::Message *)data[0].binary)));
 			}
 		}
@@ -1035,17 +1033,13 @@ namespace IO
 			break;
 		}
 		case AIS::KEY_SETTING_TOPIC:
-			mqtt.setValue("TOPIC", arg);
+			mqtt.setOptionKey(AIS::KEY_SETTING_TOPIC, arg);
 			topic_template.set(arg);
 			break;
 		default:
-		{
-			std::string opt = AIS::KeyMap[key][JSON_DICT_SETTING];
-			Util::Convert::toUpper(opt);
-			if (!tcp.setValue(opt, arg) && !mqtt.setValue(opt, arg) && !ws.setValue(opt, arg) && !setOptionKey(key, arg))
+			if (!tcp.setOptionKey(key, arg) && !mqtt.setOptionKey(key, arg) && !ws.setOptionKey(key, arg) && !setOptionKey(key, arg))
 				throw std::runtime_error(std::string("MQTT output - unknown option: ") + AIS::KeyMap[key][JSON_DICT_SETTING] + " " + arg);
 			break;
-		}
 		}
 		return *this;
 	}

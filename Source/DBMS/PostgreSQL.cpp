@@ -203,7 +203,7 @@ namespace IO
 			case AIS::KEY_COURSE:
 			case AIS::KEY_SPEED:
 				keys += std::string(AIS::KeyMap[p.Key()][JSON_DICT_FULL]) + ",";
-				builder.to_string(values, p.Get());
+				p.Get().to_string(values);
 				values += ",";
 				break;
 			}
@@ -262,7 +262,7 @@ namespace IO
 					values += "\'" + escape(p.Get().getString()) + "\'";
 				}
 				else
-					builder.to_string(values, p.Get());
+					p.Get().to_string(values);
 				values += ",";
 				break;
 			}
@@ -313,7 +313,7 @@ namespace IO
 					values += "\'" + escape(p.Get().getString()) + "\'";
 				}
 				else
-					builder.to_string(values, p.Get());
+					p.Get().to_string(values);
 				values += ",";
 				break;
 			}
@@ -343,7 +343,7 @@ namespace IO
 			case AIS::KEY_LON:
 			case AIS::KEY_MMSI:
 				keys += std::string(AIS::KeyMap[p.Key()][JSON_DICT_FULL]) + ",";
-				builder.to_string(values, p.Get());
+				p.Get().to_string(values);
 				values += ",";
 				break;
 			}
@@ -376,7 +376,7 @@ namespace IO
 			case AIS::KEY_MMSI:
 			case AIS::KEY_SPEED:
 				keys += std::string(AIS::KeyMap[p.Key()][JSON_DICT_FULL]) + ",";
-				builder.to_string(values, p.Get());
+				p.Get().to_string(values);
 				values += ",";
 				break;
 			}
@@ -417,7 +417,7 @@ namespace IO
 					values += "\'" + escape(p.Get().getString()) + "\'";
 				}
 				else
-					builder.to_string(values, p.Get());
+					p.Get().to_string(values);
 				values += ",";
 				break;
 			}
@@ -517,7 +517,7 @@ namespace IO
 				else
 				{
 					std::string temp;
-					builder.to_string(temp, p.Get());
+					p.Get().to_string(temp);
 					temp = temp.substr(0, 20);
 					sql << "INSERT INTO ais_property (msg_id, key, value) VALUES  (" << m_id << "\',\'" + temp + "\');\n";
 				}

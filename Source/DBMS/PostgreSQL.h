@@ -37,7 +37,6 @@ namespace IO
 
 	class PostgreSQL : public OutputMessage
 	{
-		JSON::StringBuilder builder;
 		std::string sql_trans;
 		std::stringstream sql;
 		AIS::Filter filter;
@@ -78,7 +77,7 @@ namespace IO
 		void post();
 #endif
 	public:
-		PostgreSQL() : OutputMessage("PostgreSQL"), builder(JSON_DICT_FULL) { fmt = MessageFormat::JSON_FULL; }
+		PostgreSQL() : OutputMessage("PostgreSQL") { fmt = MessageFormat::JSON_FULL; }
 		~PostgreSQL();
 
 #ifdef HASPSQL
@@ -97,7 +96,6 @@ namespace IO
 		void setup();
 
 		void Start() { setup(); }
-		void setMap(int m) { builder.setMap(m); }
 
 		Setting &SetKey(AIS::Keys key, const std::string &arg);
 	};

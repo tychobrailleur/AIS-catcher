@@ -105,7 +105,7 @@ namespace IO
 		{
 			if (filter.include(*(AIS::Message *)data[i].binary))
 			{
-				int n = fastBuilder.stringify(data[i], jsonBuf, sizeof(jsonBuf), "\n");
+				int n = builder.stringify(data[i], jsonBuf, sizeof(jsonBuf), "\n");
 				std::cout.write(jsonBuf, n);
 			}
 		}
