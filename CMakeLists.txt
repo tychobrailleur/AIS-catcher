@@ -94,7 +94,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     add_compile_options("-Wno-psabi")
     add_compile_options("-Wno-sign-compare")
 elseif(MSVC)
-    set(OPTIMIZATION_FLAGS "-DWIN32_LEAN_AND_MEAN /EHsc /Oi /Ot /fp:fast")
+    set(OPTIMIZATION_FLAGS "-DWIN32_LEAN_AND_MEAN /EHsc /Oi /Ot /fp:fast") # spellchecker:disable-line
 endif()
 
 set(CMAKE_CXX_FLAGS "${OPTIMIZATION_FLAGS}")

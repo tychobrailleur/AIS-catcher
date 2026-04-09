@@ -1611,7 +1611,7 @@ namespace Protocol
 				}
 				else
 				{
-					Warning() << "WebSocket: package too larget, dropped";
+					Warning() << "WebSocket: package too large, dropped";
 				}
 				break;
 			case OPCODE::CLOSE:

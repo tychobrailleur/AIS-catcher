@@ -96,7 +96,7 @@ namespace IO
 				return true;
 			case AIS::KEY_SETTING_MSGFORMAT:
 				if (!Util::Parse::OutputFormat(arg, fmt))
-					throw std::runtime_error("Uknown message format: " + arg);
+					throw std::runtime_error("Unknown message format: " + arg);
 				if (fmt == MessageFormat::JSON_ANNOTATED)
 					builder.setStringifyEnhanced(true);
 				else if (fmt == MessageFormat::JSON_SPARSE)
