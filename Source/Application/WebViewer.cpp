@@ -76,16 +76,20 @@ void PluginManager::setReceivers(const std::vector<std::unique_ptr<ReceiverTrack
 {
 	if (states.size() > 1)
 	{
-		params += "var server_receivers = [";
-		for (int i = 0; i < (int)states.size(); i++)
+		params += "var server_receivers = ";
 		{
-			if (i)
-				params += ",";
-			params += "{\"idx\":" + std::to_string(i) + ",\"label\":";
-			JSON::stringify(states[i]->label, params);
-			params += "}";
+			JSON::Writer w(params);
+			w.beginArray();
+			for (int i = 0; i < (int)states.size(); i++)
+			{
+				w.beginObject();
+				w.kv("idx", i);
+				w.kv("label", states[i]->label);
+				w.endObject();
+			}
+			w.endArray();
 		}
-		params += "];\n";
+		params += ";\n";
 	}
 	else
 	{
@@ -208,11 +212,19 @@ void SSEStreamer::Receive(const JSON::JSON *data, int len, TAG &tag)
 	{
 		AIS::Message *m = (AIS::Message *)data[0].binary;
 		std::time_t now = std::time(nullptr);
+		char channel = m->getChannel();
 
 		if (!m->NMEA.empty())
 		{
-			std::string nmea_array = "[";
-			bool first = true;
+			std::string json;
+			JSON::Writer w(json);
+			w.beginObject();
+			w.kv("mmsi", m->mmsi());
+			w.kv("timestamp", (long long)now);
+			w.kv("channel", &channel, 1);
+			w.kv("type", m->type());
+			w.kv("shipname", tag.shipname);
+			w.key("nmea").beginArray();
 
 			for (const auto &s : m->NMEA)
 			{
@@ -226,39 +238,39 @@ void SSEStreamer::Receive(const JSON::JSON *data, int len, TAG &tag)
 				if (start == std::string::npos)
 					continue;
 
-				std::string::size_type len = end - start - 1;
+				std::string::size_type field_len = end - start - 1;
 
-				if (len == 0)
+				if (field_len == 0)
 					continue;
 
 				if (obfuscate)
 				{
 					for (int i = 0; i < 3; i++)
 					{
-						idx = (idx + 1) % len;
+						idx = (idx + 1) % field_len;
 						nmea[MIN(start + 1 + idx, nmea.length() - 1)] = '*';
 					}
 				}
 
-				if (!first)
-					nmea_array += ",";
-				nmea_array += "\"" + nmea + "\"";
-				first = false;
+				w.val(nmea.data(), nmea.size());
 			}
-			nmea_array += "]";
-
-			std::string json = "{\"mmsi\":" + std::to_string(m->mmsi()) +
-							   ",\"timestamp\":" + std::to_string(now) +
-							   ",\"channel\":\"" + m->getChannel() +
-							   "\",\"type\":" + std::to_string(m->type()) +
-							   ",\"shipname\":" + JSON::stringify(std::string(tag.shipname)) +
-							   ",\"nmea\":" + nmea_array + "}";
+			w.endArray();
+			w.endObject();
+			w.finish();
 			server->sendSSE(1, "nmea", json);
 		}
 
 		if (tag.lat != 0 && tag.lon != 0)
 		{
-			std::string json = "{\"mmsi\":" + std::to_string(m->mmsi()) + ",\"channel\":\"" + m->getChannel() + "\",\"lat\":" + std::to_string(tag.lat) + ",\"lon\":" + std::to_string(tag.lon) + "}";
+			std::string json;
+			JSON::Writer w(json);
+			w.beginObject();
+			w.kv("mmsi", m->mmsi());
+			w.kv("channel", &channel, 1);
+			w.kv("lat", tag.lat);
+			w.kv("lon", tag.lon);
+			w.endObject();
+			w.finish();
 			server->sendSSE(2, "nmea", json);
 		}
 	}
@@ -279,50 +291,45 @@ std::string WebViewer::decodeNMEAtoJSON(const std::string &nmea_input, bool enha
 		AIS::NMEA nmea_decoder;
 		AIS::JSONAIS json_converter;
 		JSON::Serializer *builder;
-		std::string result;
-		bool first;
+		JSON::Writer *writer;
 		size_t message_count;
 		const size_t MAX_OUTPUT_SIZE;
 
-		NMEADecoder(JSON::Serializer *b) : builder(b), first(true), message_count(0), MAX_OUTPUT_SIZE(1024 * 1024)
+		NMEADecoder(JSON::Serializer *b, JSON::Writer *w) : builder(b), writer(w), message_count(0), MAX_OUTPUT_SIZE(1024 * 1024)
 		{
 			nmea_decoder >> json_converter;
 			json_converter.out.Connect(this);
-
-			result = "[";
-			result.reserve(4096);
 		}
 
 		void Receive(const JSON::JSON *data, int len, TAG &tag) override
 		{
 			for (int i = 0; i < len; i++)
 			{
-				if (result.size() > MAX_OUTPUT_SIZE)
+				if (writer->written() > MAX_OUTPUT_SIZE)
 					throw std::runtime_error("Output size limit exceeded");
 
-				if (!first)
-					result += ",";
-
-				first = false;
-				builder->stringify(data[i], result);
+				builder->stringify(data[i], *writer);
 				message_count++;
 			}
 		}
-
-		std::string decode(const std::string &nmea_input)
-		{
-			RAW raw = {Format::TXT, (void *)nmea_input.c_str(), (int)nmea_input.length()};
-			TAG tag;
-			nmea_decoder.Receive(&raw, 1, tag);
-			result += "]";
-			return result;
-		}
 	};
+
+	std::string result;
+	result.reserve(4096);
+	JSON::Writer w(result);
+	w.beginArray();
 
 	JSON::Serializer builder(JSON_DICT_FULL);
 	builder.setStringifyEnhanced(enhanced);
-	NMEADecoder decoder(&builder);
-	return decoder.decode(nmea_input);
+	NMEADecoder decoder(&builder, &w);
+
+	RAW raw = {Format::TXT, (void *)nmea_input.c_str(), (int)nmea_input.length()};
+	TAG tag;
+	decoder.nmea_decoder.Receive(&raw, 1, tag);
+
+	w.endArray();
+	w.finish();
+	return result;
 }
 
 std::vector<std::string> WebViewer::parsePath(const std::string &url)
@@ -601,43 +608,67 @@ bool ReceiverTracker::load(std::ifstream &f)
 	return counter.Load(f) && hist_second.Load(f) && hist_minute.Load(f) && hist_hour.Load(f) && hist_day.Load(f) && (f.peek() == EOF || ships.Load(f));
 }
 
+void ReceiverTracker::writeHistoryJSON(JSON::Writer &w)
+{
+	w.beginObject();
+	w.key("second");
+	hist_second.writeJSON(w);
+	w.key("minute");
+	hist_minute.writeJSON(w);
+	w.key("hour");
+	hist_hour.writeJSON(w);
+	w.key("day");
+	hist_day.writeJSON(w);
+	w.endObject();
+}
+
+void ReceiverTracker::writeCountersJSON(JSON::Writer &w)
+{
+	w.key("total");
+	counter.writeJSON(w);
+	w.key("session");
+	counter_session.writeJSON(w);
+	w.key("last_day");
+	hist_day.writeLastStatJSON(w);
+	w.key("last_hour");
+	hist_hour.writeLastStatJSON(w);
+	w.key("last_minute");
+	hist_minute.writeLastStatJSON(w);
+	w.kv("msg_rate", hist_second.getAverage());
+	w.kv("vessel_count", ships.getCount());
+	w.kv("vessel_max", ships.getMaxCount());
+}
+
 std::string ReceiverTracker::toHistoryJSON()
 {
-	std::string j = "{";
-	j += "\"second\":" + hist_second.toJSON();
-	j += ",\"minute\":" + hist_minute.toJSON();
-	j += ",\"hour\":" + hist_hour.toJSON();
-	j += ",\"day\":" + hist_day.toJSON();
-	j += "}";
-	return j;
+	std::string s;
+	JSON::Writer w(s);
+	writeHistoryJSON(w);
+	w.finish();
+	return s;
 }
 
 std::string ReceiverTracker::toCountersJSON()
 {
-	std::string j;
-	j += "\"total\":" + counter.toJSON() + ",";
-	j += "\"session\":" + counter_session.toJSON() + ",";
-	j += "\"last_day\":" + hist_day.lastStatToJSON() + ",";
-	j += "\"last_hour\":" + hist_hour.lastStatToJSON() + ",";
-	j += "\"last_minute\":" + hist_minute.lastStatToJSON() + ",";
-	j += "\"msg_rate\":" + std::to_string(hist_second.getAverage()) + ",";
-	j += "\"vessel_count\":" + std::to_string(ships.getCount()) + ",";
-	j += "\"vessel_max\":" + std::to_string(ships.getMaxCount());
-	return j;
+	std::string s;
+	JSON::Writer w(s);
+	writeCountersJSON(w);
+	w.finish();
+	return s;
 }
 
 void ReceiverTracker::setDevice(Device::Device *device)
 {
-	product = JSON::stringify(device->getProduct(), false);
-	vendor = JSON::stringify(device->getVendor().empty() ? "-" : device->getVendor(), false);
-	serial = JSON::stringify(device->getSerial().empty() ? "-" : device->getSerial(), false);
+	product = device->getProduct();
+	vendor = device->getVendor().empty() ? "-" : device->getVendor();
+	serial = device->getSerial().empty() ? "-" : device->getSerial();
 	sample_rate = device->getRateDescription();
 
 	if (serial == ".")
 		label = "Console";
 	else
 	{
-		label = device->getProduct();
+		label = product;
 		if (serial != "-")
 			label += " " + serial;
 	}
@@ -645,9 +676,9 @@ void ReceiverTracker::setDevice(Device::Device *device)
 
 void ReceiverTracker::appendDevice(Device::Device *device, const std::string &newline)
 {
-	product += JSON::stringify(device->getProduct(), false) + newline;
-	vendor += JSON::stringify(device->getVendor().empty() ? "-" : device->getVendor(), false) + newline;
-	serial += JSON::stringify(device->getSerial().empty() ? "-" : device->getSerial(), false) + newline;
+	product += device->getProduct() + newline;
+	vendor += (device->getVendor().empty() ? "-" : device->getVendor()) + newline;
+	serial += (device->getSerial().empty() ? "-" : device->getSerial()) + newline;
 	sample_rate += device->getRateDescription() + newline;
 }
 
@@ -765,9 +796,9 @@ void WebViewer::connect(AIS::Model &m, Connection<JSON::JSON> &json, Device::Dev
 		device >> raw_counter;
 
 		states[0]->sample_rate = device.getRateDescription();
-		states[0]->product = JSON::stringify(device.getProduct(), false);
-		states[0]->vendor = JSON::stringify(device.getVendor().empty() ? "-" : device.getVendor(), false);
-		states[0]->serial = JSON::stringify(device.getSerial().empty() ? "-" : device.getSerial(), false);
+		states[0]->product = device.getProduct();
+		states[0]->vendor = device.getVendor().empty() ? "-" : device.getVendor();
+		states[0]->serial = device.getSerial().empty() ? "-" : device.getSerial();
 		states[0]->model_name = m.getName();
 	}
 }
@@ -871,48 +902,51 @@ int WebViewer::parseMMSI(const std::string &query)
 std::string WebViewer::buildStatJSON(ReceiverTracker *s)
 {
 	std::string content;
-	content.reserve(2048);
+	JSON::Writer w(content);
 
-	content += "{" + s->toCountersJSON() + ",";
-	content += "\"tcp_clients\":" + std::to_string(numberOfClients()) + ",";
-	content += "\"sharing\":" + std::string(comm_feed ? "true" : "false") + ",";
+	w.beginObject();
+	s->writeCountersJSON(w);
+	w.kv("tcp_clients", numberOfClients());
+	w.kv("sharing", comm_feed != nullptr);
 	if (tracking.latlon_share && tracking.lat != LAT_UNDEFINED && tracking.lon != LON_UNDEFINED)
-		content += "\"sharing_link\":\"https://www.aiscatcher.org/?&zoom=10&lat=" + std::to_string(tracking.lat) + "&lon=" + std::to_string(tracking.lon) + "\",";
+	{
+		std::string link = "https://www.aiscatcher.org/?&zoom=10&lat=" + std::to_string(tracking.lat) + "&lon=" + std::to_string(tracking.lon);
+		w.kv("sharing_link", link);
+	}
 	else
-		content += "\"sharing_link\":\"https://www.aiscatcher.org\",";
+	{
+		w.kv("sharing_link", "https://www.aiscatcher.org");
+	}
 
-	content += "\"station\":" + station + ",";
-	content += "\"station_link\":" + station_link + ",";
-	content += "\"sample_rate\":\"" + s->sample_rate + "\",";
-	content += "\"msg_rate\":" + std::to_string(s->getMsgRate()) + ",";
-	content += "\"vessel_count\":" + std::to_string(s->getCount()) + ",";
-	content += "\"vessel_max\":" + std::to_string(s->getMaxCount()) + ",";
-	content += "\"product\":\"" + s->product + "\",";
-	content += "\"vendor\":\"" + s->vendor + "\",";
-	content += "\"serial\":\"" + s->serial + "\",";
-	content += "\"model\":\"" + s->model_name + "\",";
-	content += "\"build_date\":\"" + std::string(__DATE__) + "\",";
-	content += "\"build_version\":\"" + std::string(VERSION) + "\",";
-	content += "\"build_describe\":\"" + std::string(VERSION_DESCRIBE) + "\",";
-	content += "\"run_time\":\"" + std::to_string((long int)time(nullptr) - (long int)time_start) + "\",";
-	content += "\"memory\":" + std::to_string(Util::Helper::getMemoryConsumption()) + ",";
-	content += "\"os\":" + os + ",";
-	content += "\"hardware\":" + hardware;
+	w.kv_raw("station", station);
+	w.kv_raw("station_link", station_link);
+	w.kv("sample_rate", s->sample_rate);
+	w.kv("msg_rate", s->getMsgRate());
+	w.kv("vessel_count", s->getCount());
+	w.kv("vessel_max", s->getMaxCount());
+	w.kv("product", s->product);
+	w.kv("vendor", s->vendor);
+	w.kv("serial", s->serial);
+	w.kv("model", s->model_name);
+	w.kv("build_date", __DATE__);
+	w.kv("build_version", VERSION);
+	w.kv("build_describe", VERSION_DESCRIBE);
+	w.kv("run_time", std::to_string((long int)time(nullptr) - (long int)time_start));
+	w.kv("memory", (unsigned long long)Util::Helper::getMemoryConsumption());
+	w.kv_raw("os", os);
+	w.kv_raw("hardware", hardware);
 
-	content += ",\"outputs\":[";
-	bool first = true;
+	w.key("outputs").beginArray();
 	if (msg_channels)
 	{
 		for (auto &o : *msg_channels)
-		{
-			if (!first)
-				content += ",";
-			content += o->getJSON();
-			first = false;
-		}
+			w.raw_val(o->getJSON());
 	}
-	content += "],\"received\":" + std::to_string(raw_counter.received) + "}";
+	w.endArray();
+	w.kv("received", (unsigned long long)raw_counter.received);
+	w.endObject();
 
+	w.finish();
 	return content;
 }
 
@@ -920,7 +954,9 @@ std::string WebViewer::buildMultiPathJSON(ReceiverTracker *s, const std::string 
 {
 	std::stringstream ss(query);
 	std::string mmsi_str;
-	std::string content = "{";
+	std::string content;
+	JSON::Writer w(content);
+	w.beginObject();
 	int count = 0;
 	const int MAX_MMSI_COUNT = 100;
 
@@ -937,9 +973,9 @@ std::string WebViewer::buildMultiPathJSON(ReceiverTracker *s, const std::string 
 			int mmsi = std::stoi(mmsi_str);
 			if (mmsi >= 1 && mmsi <= 999999999)
 			{
-				if (content.length() > 1)
-					content += ",";
-				content += "\"" + std::to_string(mmsi) + "\":" + (s ? s->getPathJSON(mmsi) : "{}");
+				char keybuf[12];
+				snprintf(keybuf, sizeof(keybuf), "%d", mmsi);
+				w.key(keybuf).raw_val(s ? s->getPathJSON(mmsi) : std::string("{}"));
 			}
 		}
 		catch (const std::invalid_argument &)
@@ -951,7 +987,8 @@ std::string WebViewer::buildMultiPathJSON(ReceiverTracker *s, const std::string 
 			Error() << "Server - path MMSI out of range: " << mmsi_str;
 		}
 	}
-	content += "}";
+	w.endObject();
+	w.finish();
 	return content;
 }
 

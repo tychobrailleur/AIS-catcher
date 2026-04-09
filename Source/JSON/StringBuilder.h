@@ -860,6 +860,14 @@ namespace JSON
 			return w.finish();
 		}
 
+		// Serializes object into an existing Writer. Honors the Writer's current
+		// separator state, so callers can interleave serialized objects with
+		// other Writer operations (e.g. inside a beginArray()/endArray() frame).
+		void stringify(const JSON &object, Writer &w)
+		{
+			write_object(object, w);
+		}
+
 		void setMap(int d) { dict = d; }
 		void setStringifyEnhanced(bool enhanced) { stringify_enhanced = enhanced; }
 		bool getStringifyEnhanced() const { return stringify_enhanced; }

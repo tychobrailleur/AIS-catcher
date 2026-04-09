@@ -147,6 +147,8 @@ public:
 	void connectSink(T &sink) { ships >> sink; }
 
 	// JSON output
+	void writeHistoryJSON(JSON::Writer &w);
+	void writeCountersJSON(JSON::Writer &w);
 	std::string toHistoryJSON();
 	std::string toCountersJSON();
 

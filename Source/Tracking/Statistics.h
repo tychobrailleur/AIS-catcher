@@ -25,6 +25,7 @@
 #include "JSONAIS.h"
 #include "Convert.h"
 #include "Message.h"
+#include "StringBuilder.h"
 
 // ----------------------------
 // Class to log message count stat
@@ -114,37 +115,54 @@ public:
 		}
 	}
 
-	std::string toJSON(bool empty = false) {
+	void writeJSON(JSON::Writer &w, bool empty = false) {
 		std::lock_guard<std::mutex> l{ this->mtx };
-		static const std::string null_str = "null";
-		static const std::string comma = ",";
-
-		std::string element;
 
 		int c = _count - _exclude;
 		bool has_level = c > 0 && _level_min <= _level_max;
 
-		element += "{\"count\":" + std::to_string(empty ? 0 : _count) +
-				   ",\"vessels\":" + std::to_string(empty ? 0 : _vessels) +
-				   ",\"level_min\":" + ((empty || !has_level) ? null_str : Util::Convert::toString(_level_min)) +
-				   ",\"level_max\":" + ((empty || !has_level) ? null_str : Util::Convert::toString(_level_max)) +
-				   ",\"ppm\":" + (empty || !has_level ? null_str : std::to_string(_ppm / c)) +
-				   ",\"dist\":" + (empty ? null_str : std::to_string(_distance)) +
-				   ",\"channel\":[";
+		w.beginObject();
+		w.kv("count", empty ? 0 : _count);
+		w.kv("vessels", empty ? 0 : _vessels);
+		if (empty || !has_level) {
+			w.kv_null("level_min");
+			w.kv_null("level_max");
+			w.kv_null("ppm");
+		} else {
+			w.kv("level_min", _level_min);
+			w.kv("level_max", _level_max);
+			w.kv("ppm", _ppm / c);
+		}
+		if (empty)
+			w.kv_null("dist");
+		else
+			w.kv("dist", _distance);
 
-		for (int i = 0; i < 4; i++) element += std::to_string(empty ? 0 : _channel[i]) + comma;
-		element.pop_back();
-		element += "],\"radar_a\":[";
-		for (int i = 0; i < _RADAR_BUCKETS; i++) element += std::to_string(empty ? 0 : _radarA[i]) + comma;
-		element.pop_back();
-		element += "],\"radar_b\":[";
-		for (int i = 0; i < _RADAR_BUCKETS; i++) element += std::to_string(empty ? 0 : _radarB[i]) + comma;
-		element.pop_back();
-		element += "],\"msg\":[";
-		for (int i = 0; i < 27; i++) element += std::to_string(empty ? 0 : _msg[i]) + comma;
-		element.pop_back();
-		element += "]}";
-		return element;
+		w.key("channel").beginArray();
+		for (int i = 0; i < 4; i++) w.val(empty ? 0 : _channel[i]);
+		w.endArray();
+
+		w.key("radar_a").beginArray();
+		for (int i = 0; i < _RADAR_BUCKETS; i++) w.val(empty ? 0.0f : _radarA[i]);
+		w.endArray();
+
+		w.key("radar_b").beginArray();
+		for (int i = 0; i < _RADAR_BUCKETS; i++) w.val(empty ? 0.0f : _radarB[i]);
+		w.endArray();
+
+		w.key("msg").beginArray();
+		for (int i = 0; i < 27; i++) w.val(empty ? 0 : _msg[i]);
+		w.endArray();
+
+		w.endObject();
+	}
+
+	std::string toJSON(bool empty = false) {
+		std::string s;
+		JSON::Writer w(s);
+		writeJSON(w, empty);
+		w.finish();
+		return s;
 	}
 
 	bool Save(std::ofstream& file) {
@@ -210,6 +228,7 @@ public:
 
 	void Receive(const JSON::JSON* msg, int len, TAG& tag) { stat.Add(*((AIS::Message*)msg[0].binary), tag); }
 
+	void writeJSON(JSON::Writer &w, bool empty = false) { stat.writeJSON(w, empty); }
 	std::string toJSON(bool empty = false) { return stat.toJSON(empty); }
 };
 
