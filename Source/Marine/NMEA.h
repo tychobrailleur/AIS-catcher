@@ -49,30 +49,40 @@ namespace AIS
 		struct AIVDM
 		{
 			std::string sentence;
+			uint64_t timestamp = 0;
+			uint32_t match_key = 0; // (talkerID << 16) | (talkerID2 << 8) | channel
+			uint32_t message_error = 0;
+			int groupId = 0; // NMEA 4.0 tag block group ID
 			uint16_t data_offset = 0;
 			uint16_t data_len = 0;
-
-			uint64_t timestamp = 0;
-			int groupId = 0; // NMEA 4.0 tag block group ID
+			uint8_t count = 0;
+			uint8_t number = 0;
+			uint8_t ID = 0;
+			uint8_t fillbits = 0;
 
 			void reset()
 			{
 				sentence.clear();
+				timestamp = time(nullptr);
+				match_key = 0;
+				message_error = 0;
+				groupId = 0;
 				data_offset = 0;
 				data_len = 0;
-				timestamp = time(nullptr);
-				groupId = 0;
-				message_error = 0;
+				count = 0;
+				number = 0;
+				ID = 0;
+				fillbits = 0;
 			}
-			char channel = 0;
-			int count = 0;
-			int number = 0;
-			int ID = 0;
-			int checksum = 0;
-			int fillbits = 0;
-			int talkerID = 0;
-			uint32_t message_error;
+
+			char channel() const { return (char)(match_key & 0xFF); }
 		} aivdm;
+
+		static bool matches(const AIVDM &a, const AIVDM &b)
+		{
+			return (a.groupId != 0 && a.groupId == b.groupId) ||
+				   (a.groupId == 0 && a.match_key == b.match_key);
+		}
 
 		// Zero-allocation field splitter: stores delimiter positions into source string
 		const std::string *splitStr = nullptr;
@@ -118,11 +128,11 @@ namespace AIS
 		void dispatchAIS(TAG &tag);
 		void addline(const AIVDM &a);
 		void reset();
-		void clean(char, int, int groupId = 0);
+		void clean(const AIVDM &ref);
 		int search();
 
-		static bool isHEX(char c) { unsigned u = (unsigned char)c; return (u - '0' < 10u) | ((u | 0x20) - 'a' < 6u); }
-		static int fromHEX(char c) { unsigned u = (unsigned char)c, d = u - '0'; return d < 10u ? d : (int)((u | 0x20) - 'a' + 10); }
+		static bool isHexDigit(char c) { unsigned u = (unsigned char)c; return (u - '0' < 10u) | ((u | 0x20) - 'a' < 6u); }
+		static int hexDigitValue(char c) { unsigned u = (unsigned char)c, d = u - '0'; return d < 10u ? d : (int)((u | 0x20) - 'a' + 10); }
 
 		float GpsToDecimal(const char *, int len, char, bool &error);
 
@@ -140,9 +150,10 @@ namespace AIS
 		void split(const std::string &, size_t offset = 0);
 		void processJSONsentence(TAG &tag);
 		bool processAIS(const std::string &s, TAG &tag);
-		bool processGGA(const std::string &s, TAG &tag);
-		bool processGLL(const std::string &s, TAG &tag);
-		bool processRMC(const std::string &s, TAG &tag);
+		bool processGPS(const std::string &s, TAG &tag, const char *name,
+						int min_fields, int max_fields,
+						int lat_idx, int ns_idx, int lon_idx, int ew_idx,
+						int fix_idx = -1);
 		bool processBinaryPacket(TAG &tag);
 		bool parseTagBlock(const std::string &s, std::string &nmea);
 		bool processTagBlock(const std::string &s, TAG &tag);

@@ -32,16 +32,13 @@ namespace AIS
 		line.clear();
 	}
 
-	void NMEA::clean(char c, int t, int groupId)
+	void NMEA::clean(const AIVDM &ref)
 	{
 		auto i = queue.begin();
 		uint64_t now = time(nullptr);
 		while (i != queue.end())
 		{
-			// Match by groupId if available, otherwise by channel+talkerID
-			bool match = (groupId != 0 && i->groupId == groupId) ||
-						 (groupId == 0 && i->channel == c && i->talkerID == t);
-			if (match || (i->timestamp + 3 < now))
+			if (matches(ref, *i) || (i->timestamp + 3 < now))
 				i = queue.erase(i);
 			else
 				i++;
@@ -54,10 +51,7 @@ namespace AIS
 		int lastNumber = 0;
 		for (auto it = queue.rbegin(); it != queue.rend(); it++)
 		{
-			// Match by groupId if available, otherwise by channel+talkerID
-			bool match = (aivdm.groupId != 0 && it->groupId == aivdm.groupId) ||
-						 (aivdm.groupId == 0 && it->channel == aivdm.channel && it->talkerID == aivdm.talkerID);
-			if (match)
+			if (matches(aivdm, *it))
 			{
 				if (it->count != aivdm.count || it->ID != aivdm.ID)
 					lastNumber = -1;
@@ -88,7 +82,7 @@ namespace AIS
 		int result = search();
 		if (aivdm.number != result + 1 || result == -1)
 		{
-			clean(aivdm.channel, aivdm.talkerID, aivdm.groupId);
+			clean(aivdm);
 			if (aivdm.number != 1)
 				return;
 		}
@@ -101,13 +95,11 @@ namespace AIS
 			return;
 
 		// All parts collected — assemble and send
-		initMsg(aivdm.channel, src);
+		initMsg(aivdm.channel(), src);
 
 		for (auto &it : queue)
 		{
-			bool match = (aivdm.groupId != 0 && it.groupId == aivdm.groupId) ||
-						 (aivdm.groupId == 0 && it.channel == aivdm.channel && it.talkerID == aivdm.talkerID);
-			if (match && it.count == aivdm.count && it.ID == aivdm.ID)
+			if (matches(aivdm, it) && it.count == aivdm.count && it.ID == aivdm.ID)
 			{
 				tag.error |= it.message_error;
 				addline(it);
@@ -127,7 +119,7 @@ namespace AIS
 			Warning() << "NMEA: invalid message of type " << msg.type() << " and length " << msg.getLength() << " from station " << src << ".";
 		}
 
-		clean(aivdm.channel, aivdm.talkerID, aivdm.groupId);
+		clean(aivdm);
 	}
 
 	void NMEA::addline(const AIVDM &a)
@@ -231,23 +223,30 @@ namespace AIS
 		splitDelim[++splitCount] = (int)s.size(); // sentinel after last field
 	}
 
+	static bool parse_uint(const char *p, int len, int64_t &out)
+	{
+		if (len <= 0)
+			return false;
+		int64_t v = 0;
+		for (int i = 0; i < len; i++)
+		{
+			if (p[i] < '0' || p[i] > '9')
+				return false;
+			v = v * 10 + (p[i] - '0');
+		}
+		out = v;
+		return true;
+	}
+
 	int NMEA::partInt(int i) const
 	{
-		int val = 0;
-		bool neg = false;
-		for (int j = 0, len = partLen(i); j < len; j++)
-		{
-			char c = partAt(i, j);
-			if (j == 0 && c == '-')
-			{
-				neg = true;
-				continue;
-			}
-			if (c < '0' || c > '9')
-				break;
-			val = val * 10 + (c - '0');
-		}
-		return neg ? -val : val;
+		const char *p = partPtr(i);
+		int len = partLen(i);
+		bool neg = (len > 0 && p[0] == '-');
+		int64_t v;
+		if (!parse_uint(p + neg, len - neg, v))
+			return 0;
+		return neg ? -(int)v : (int)v;
 	}
 
 	// stackoverflow variant (need to find the reference)
@@ -283,128 +282,55 @@ namespace AIS
 		return v;
 	}
 
-	bool NMEA::processGGA(const std::string &s, TAG &tag)
+	bool NMEA::processGPS(const std::string &s, TAG &tag, const char *name,
+						   int min_fields, int max_fields,
+						   int lat_idx, int ns_idx, int lon_idx, int ew_idx,
+						   int fix_idx)
 	{
 		if (!cfg_GPS)
 			return true;
 
 		split(s);
 
-		if (splitCount != 15)
+		if (splitCount < min_fields || splitCount > max_fields)
 		{
 			if (cfg_warnings)
-				Warning() << "GGA: expected 15 fields, got " << splitCount;
+				Warning() << name << ": expected " << min_fields << " fields, got " << splitCount;
 			return false;
 		}
-
-		int checksum = partLen(14) > 2 ? (fromHEX(partAt(14, partLen(14) - 2)) << 4) | fromHEX(partAt(14, partLen(14) - 1)) : -1;
-		if (checksum != splitChecksum)
-		{
-			if (cfg_warnings)
-				Warning() << "GGA: checksum mismatch";
-			if (cfg_crc_check)
-				return false;
-		}
-
-		int fix = partInt(6);
-		if (fix != 1 && fix != 2)
-			return false;
-		if (partEmpty(3) || partEmpty(5))
-			return false;
-
-		bool error = false;
-		GPS gps(GpsToDecimal(partPtr(2), partLen(2), partAt(3, 0), error),
-				GpsToDecimal(partPtr(4), partLen(4), partAt(5, 0), error),
-				s, empty);
-
-		if (error)
-		{
-			if (cfg_warnings)
-				Warning() << "GGA: invalid coordinates";
-			return false;
-		}
-
-		outGPS.Send(&gps, 1, tag);
-		return true;
-	}
-
-	bool NMEA::processRMC(const std::string &s, TAG &tag)
-	{
-		if (!cfg_GPS)
-			return true;
-
-		split(s);
-
-		if (splitCount < 12 || splitCount > 14)
-			return false;
 
 		int last = splitCount - 1;
-		int checksum = partLen(last) > 2 ? (fromHEX(partAt(last, partLen(last) - 2)) << 4) | fromHEX(partAt(last, partLen(last) - 1)) : -1;
+		int checksum = partLen(last) > 2 ? (hexDigitValue(partAt(last, partLen(last) - 2)) << 4) | hexDigitValue(partAt(last, partLen(last) - 1)) : -1;
 		if (checksum != splitChecksum)
 		{
 			if (cfg_warnings)
-				Warning() << "RMC: checksum mismatch";
+				Warning() << name << ": checksum mismatch";
 			if (cfg_crc_check)
 				return false;
 		}
 
-		if (partEmpty(4) || partEmpty(6))
+		if (fix_idx >= 0)
+		{
+			int fix = partInt(fix_idx);
+			if (fix != 1 && fix != 2)
+				return false;
+		}
+
+		if (partEmpty(ns_idx) || partEmpty(ew_idx))
 			return false;
 
 		bool error = false;
-		GPS gps(GpsToDecimal(partPtr(3), partLen(3), partAt(4, 0), error),
-				GpsToDecimal(partPtr(5), partLen(5), partAt(6, 0), error),
+		GPS gps(GpsToDecimal(partPtr(lat_idx), partLen(lat_idx), partAt(ns_idx, 0), error),
+				GpsToDecimal(partPtr(lon_idx), partLen(lon_idx), partAt(ew_idx, 0), error),
 				s, empty);
 
 		if (error)
 		{
 			if (cfg_warnings)
-				Warning() << "RMC: invalid coordinates";
+				Warning() << name << ": invalid coordinates";
 			return false;
 		}
 
-		outGPS.Send(&gps, 1, tag);
-		return true;
-	}
-
-	bool NMEA::processGLL(const std::string &s, TAG &tag)
-	{
-		if (!cfg_GPS)
-			return true;
-
-		split(s);
-
-		if (splitCount != 8)
-		{
-			if (cfg_warnings)
-				Warning() << "GLL: expected 8 fields, got " << splitCount;
-			return false;
-		}
-
-		int checksum = partLen(7) > 2 ? (fromHEX(partAt(7, partLen(7) - 2)) << 4) | fromHEX(partAt(7, partLen(7) - 1)) : -1;
-		if (checksum != splitChecksum)
-		{
-			if (cfg_warnings)
-				Warning() << "GLL: checksum mismatch";
-			if (cfg_crc_check)
-				return false;
-		}
-
-		if (partEmpty(2) || partEmpty(4))
-			return false;
-
-		bool error = false;
-		float lat = GpsToDecimal(partPtr(1), partLen(1), partAt(2, 0), error);
-		float lon = GpsToDecimal(partPtr(3), partLen(3), partAt(4, 0), error);
-
-		if (error)
-		{
-			if (cfg_warnings)
-				Warning() << "GLL: invalid coordinates";
-			return false;
-		}
-
-		GPS gps(lat, lon, s, empty);
 		outGPS.Send(&gps, 1, tag);
 		return true;
 	}
@@ -436,13 +362,13 @@ namespace AIS
 
 		// Parse from back: ,F*HH
 		const char *end = p + len;
-		if (!isHEX(end[-1]) || !isHEX(end[-2]) || end[-3] != '*' || end[-5] != ',')
+		if (!isHexDigit(end[-1]) || !isHexDigit(end[-2]) || end[-3] != '*' || end[-5] != ',')
 		{
 			if (cfg_warnings)
 				Warning() << "AIS: malformed tail in [" << str << "]";
 			return false;
 		}
-		int checksum = (fromHEX(end[-2]) << 4) | fromHEX(end[-1]);
+		int checksum = (hexDigitValue(end[-2]) << 4) | hexDigitValue(end[-1]);
 		char fillbits_ch = end[-4];
 		if (fillbits_ch < '0' || fillbits_ch > '5')
 		{
@@ -528,15 +454,13 @@ namespace AIS
 
 		// Multi-part: construct aivdm and hand off to fragment assembler
 		aivdm.reset();
-		aivdm.talkerID = (t1 << 8) | t2;
+		aivdm.match_key = ((uint32_t)(uint8_t)t1 << 16) | ((uint32_t)(uint8_t)t2 << 8) | (uint8_t)channel_ch;
 		aivdm.count = p[7] - '0';
 		aivdm.number = p[9] - '0';
 		aivdm.ID = id_ch ? (id_ch - '0') : 0;
-		aivdm.channel = channel_ch;
 		aivdm.data_offset = (int)(q - str.data());
 		aivdm.data_len = (int)(payload_end - q);
 		aivdm.fillbits = fillbits;
-		aivdm.checksum = checksum;
 		aivdm.message_error = message_error;
 		aivdm.groupId = mctx.groupId;
 
@@ -573,8 +497,12 @@ namespace AIS
 				DEV_AIS_CATCHER,
 				DEV_DAISY_CATCHER
 			} dev = DEV_UNKNOWN;
+			
 			bool uuid_match = uuid.empty();
 			const std::string *message = nullptr;
+			const JSON::Value *nmea_array = nullptr;
+			float tpv_lat = 0, tpv_lon = 0;
+			bool has_tpv_coords = false;
 
 			for (const auto &p : jsonDoc.getMembers())
 			{
@@ -643,26 +571,32 @@ namespace AIS
 				case AIS::KEY_MESSAGE:
 					message = &p.Get().getStringRef();
 					break;
+				case AIS::KEY_NMEA:
+					if (p.Get().isArray())
+						nmea_array = &p.Get();
+					break;
+				case AIS::KEY_LAT:
+					tpv_lat = p.Get().isFloat() ? p.Get().getFloat() : (p.Get().isInt() ? (float)p.Get().getInt() : 0);
+					has_tpv_coords = true;
+					break;
+				case AIS::KEY_LON:
+					tpv_lon = p.Get().isFloat() ? p.Get().getFloat() : (p.Get().isInt() ? (float)p.Get().getInt() : 0);
+					has_tpv_coords = true;
+					break;
 				}
 			}
 
 			bool known_dev = (dev == DEV_AIS_CATCHER || dev == DEV_DAISY_CATCHER);
 
-			if (cls == CLS_AIS && known_dev && uuid_match)
+			if (cls == CLS_AIS && known_dev && uuid_match && nmea_array)
 			{
 				if (dev == DEV_DAISY_CATCHER && mctx.toa != 0 && !cfg_stamp)
 					mctx.rxtime = mctx.toa;
 
 				mctx.groupId = 0;
 				queue.clear();
-				for (const auto &p : jsonDoc.getMembers())
-				{
-					if (p.Key() == AIS::KEY_NMEA && p.Get().isArray())
-					{
-						for (const auto &v : p.Get().getArray())
-							processAIS(v.getString(), tag);
-					}
-				}
+				for (const auto &v : nmea_array->getArray())
+					processAIS(v.getString(), tag);
 			}
 
 			if (known_dev && message && !message->empty())
@@ -676,23 +610,10 @@ namespace AIS
 					Info() << "[" << driver << "]: " << *message;
 			}
 
-			if (cls == CLS_TPV && cfg_GPS)
+			if (cls == CLS_TPV && cfg_GPS && has_tpv_coords && (tpv_lat != 0 || tpv_lon != 0))
 			{
-				float lat = 0, lon = 0;
-
-				for (const auto &p : jsonDoc.getMembers())
-				{
-					if (p.Key() == AIS::KEY_LAT)
-						lat = p.Get().isFloat() ? p.Get().getFloat() : (p.Get().isInt() ? (float)p.Get().getInt() : 0);
-					else if (p.Key() == AIS::KEY_LON)
-						lon = p.Get().isFloat() ? p.Get().getFloat() : (p.Get().isInt() ? (float)p.Get().getInt() : 0);
-				}
-
-				if (lat != 0 || lon != 0)
-				{
-					GPS gps(lat, lon, empty, line);
-					outGPS.Send(&gps, 1, tag);
-				}
+				GPS gps(tpv_lat, tpv_lon, empty, line);
+				outGPS.Send(&gps, 1, tag);
 			}
 		}
 		catch (std::exception const &e)
@@ -740,16 +661,25 @@ namespace AIS
 			return true;
 		};
 
+		bool too_short = false;
+		auto readByte = [&](uint8_t &out) -> bool
+		{
+			if (getByte(out))
+				return true;
+			too_short = true;
+			return false;
+		};
+
 		uint8_t b;
-		if (!getByte(b) || b != 0xac || !getByte(b) || b != 0x00)
+		if (!readByte(b) || b != 0xac || !readByte(b) || b != 0x00)
 		{
 			if (cfg_warnings)
-				Warning() << "binary: invalid header";
+				Warning() << "binary: " << (too_short ? "packet too short" : "invalid header");
 			return false;
 		}
 
 		uint8_t flags;
-		if (!getByte(flags))
+		if (!readByte(flags))
 		{
 			if (cfg_warnings)
 				Warning() << "binary: packet too short";
@@ -759,19 +689,21 @@ namespace AIS
 		long long timestamp = 0;
 		for (int i = 0; i < 8; i++)
 		{
-			if (!getByte(b))
-			{
-				if (cfg_warnings)
-					Warning() << "binary: packet too short";
-				return false;
-			}
+			if (!readByte(b))
+				break;
 			timestamp = (timestamp << 8) | b;
+		}
+		if (too_short)
+		{
+			if (cfg_warnings)
+				Warning() << "binary: packet too short";
+			return false;
 		}
 
 		if (flags & 0x01)
 		{
 			uint8_t h, l, p;
-			if (!getByte(h) || !getByte(l) || !getByte(p))
+			if (!readByte(h) || !readByte(l) || !readByte(p))
 			{
 				if (cfg_warnings)
 					Warning() << "binary: packet too short";
@@ -782,7 +714,7 @@ namespace AIS
 		}
 
 		uint8_t ch, lh, ll;
-		if (!getByte(ch) || !getByte(lh) || !getByte(ll))
+		if (!readByte(ch) || !readByte(lh) || !readByte(ll))
 		{
 			if (cfg_warnings)
 				Warning() << "binary: packet too short";
@@ -805,13 +737,15 @@ namespace AIS
 
 		for (int i = 0; i < (length_bits + 7) / 8; i++)
 		{
-			if (!getByte(b))
-			{
-				if (cfg_warnings)
-					Warning() << "binary: packet too short";
-				return false;
-			}
+			if (!readByte(b))
+				break;
 			msg.setUint(i * 8, 8, b);
+		}
+		if (too_short)
+		{
+			if (cfg_warnings)
+				Warning() << "binary: packet too short";
+			return false;
 		}
 		msg.setLength(length_bits);
 
@@ -819,7 +753,7 @@ namespace AIS
 		{
 			uint16_t calc_crc = Util::Helper::CRC16((const uint8_t *)line.data(), idx);
 			uint8_t ch2, cl2;
-			if (!getByte(ch2) || !getByte(cl2))
+			if (!readByte(ch2) || !readByte(cl2))
 			{
 				if (cfg_warnings)
 					Warning() << "binary: packet too short for CRC";
@@ -886,7 +820,7 @@ namespace AIS
 
 			if (star + 3 <= pEnd)
 			{
-				int expected = (fromHEX(star[1]) << 4) | fromHEX(star[2]);
+				int expected = (hexDigitValue(star[1]) << 4) | hexDigitValue(star[2]);
 				int actual = 0;
 				for (const char *q = p; q < star; q++)
 					actual ^= *q;
@@ -917,24 +851,12 @@ namespace AIS
 				switch (field[0])
 				{
 				case 's':
-					if (vLen > 1 && val[0] == 's')
-					{
-						int n = 0;
-						bool valid = true;
-						for (int i = 1; i < vLen; i++)
-						{
-							if (val[i] >= '0' && val[i] <= '9')
-								n = n * 10 + (val[i] - '0');
-							else
-							{
-								valid = false;
-								break;
-							}
-						}
-						if (valid)
-							mctx.station = n;
-					}
+				{
+					int64_t n;
+					if (vLen > 1 && val[0] == 's' && parse_uint(val + 1, vLen - 1, n))
+						mctx.station = (int)n;
 					break;
+				}
 				case 'c':
 				{
 					bool hasDot = false;
@@ -956,26 +878,9 @@ namespace AIS
 					}
 					else
 					{
-						int64_t raw = 0;
-						bool neg = false;
-						int i = 0;
-						if (vLen > 0 && val[0] == '-')
-						{
-							neg = true;
-							i = 1;
-						}
-						bool valid = (i < vLen);
-						for (; i < vLen; i++)
-						{
-							if (val[i] >= '0' && val[i] <= '9')
-								raw = raw * 10 + (val[i] - '0');
-							else
-							{
-								valid = false;
-								break;
-							}
-						}
-						if (valid)
+						bool neg = (vLen > 0 && val[0] == '-');
+						int64_t raw;
+						if (parse_uint(val + neg, vLen - neg, raw))
 						{
 							if (neg)
 								raw = -raw;
@@ -986,37 +891,18 @@ namespace AIS
 				}
 				case 'g':
 				{
-					int dash1 = -1, dash2 = -1;
-					for (int i = 0; i < vLen; i++)
+					int dash2 = -1;
+					for (int i = 0, seen = 0; i < vLen; i++)
 					{
-						if (val[i] == '-')
+						if (val[i] == '-' && ++seen == 2)
 						{
-							if (dash1 < 0)
-								dash1 = i;
-							else
-							{
-								dash2 = i;
-								break;
-							}
+							dash2 = i;
+							break;
 						}
 					}
-					if (dash2 >= 0 && dash2 + 1 < vLen)
-					{
-						int n = 0;
-						bool valid = true;
-						for (int i = dash2 + 1; i < vLen; i++)
-						{
-							if (val[i] >= '0' && val[i] <= '9')
-								n = n * 10 + (val[i] - '0');
-							else
-							{
-								valid = false;
-								break;
-							}
-						}
-						if (valid)
-							mctx.groupId = n;
-					}
+					int64_t n;
+					if (dash2 >= 0 && parse_uint(val + dash2 + 1, vLen - dash2 - 1, n))
+						mctx.groupId = (int)n;
 					break;
 				}
 				}
@@ -1039,11 +925,11 @@ namespace AIS
 		if (memcmp(id, "VDO", 3) == 0 && cfg_VDO)
 			return processAIS(s, tag);
 		if (memcmp(id, "GGA", 3) == 0)
-			return processGGA(s, tag);
+			return processGPS(s, tag, "GGA", 15, 15, 2, 3, 4, 5, 6);
 		if (memcmp(id, "RMC", 3) == 0)
-			return processRMC(s, tag);
+			return processGPS(s, tag, "RMC", 12, 14, 3, 4, 5, 6);
 		if (memcmp(id, "GLL", 3) == 0)
-			return processGLL(s, tag);
+			return processGPS(s, tag, "GLL", 8, 8, 1, 2, 3, 4);
 
 		return true;
 	}
