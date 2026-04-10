@@ -57,8 +57,7 @@ namespace IO
 
 		HTTPClient http;
 
-		std::string json;
-
+		std::string post_body;
 		std::thread run_thread;
 		bool terminate = false, running = false;
 
@@ -114,10 +113,9 @@ namespace IO
 		friend class UDPStreamer;
 		friend class TCPClientStreamer;
 
-		UDPEndPoint(std::string a, std::string p, int id = -1)
+		UDPEndPoint(const std::string &a, const std::string &p, int id = -1)
+			: address(a), port(p), sourceID(id)
 		{
-			address = a, port = p;
-			sourceID = id;
 		}
 		int ID() { return sourceID; }
 	};
@@ -157,7 +155,7 @@ namespace IO
 			Start();
 		}
 		void Stop() override;
-		void SendTo(std::string str)
+		void SendTo(const std::string &str)
 		{
 			stats.bytes_out += str.length();
 			sendto(sock, str.c_str(), (int)str.length(), 0, address->ai_addr, (int)address->ai_addrlen);
@@ -193,7 +191,7 @@ namespace IO
 		void Start() override;
 		void Stop() override;
 
-		int SendTo(std::string str)
+		int SendTo(const std::string &str)
 		{
 			if (connection)
 			{
@@ -261,7 +259,6 @@ namespace IO
 		Protocol::WebSocket ws;
 		Protocol::ProtocolBase *session = &tcp;
 
-		std::string json;
 		Util::TemplateString topic_template;
 
 	public:

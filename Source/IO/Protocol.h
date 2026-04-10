@@ -97,7 +97,7 @@ namespace Protocol
 			return address != nullptr;
 		}
 
-		std::string getErrorMessage() const
+		const std::string &getErrorMessage() const
 		{
 			return msg;
 		}
@@ -117,13 +117,13 @@ namespace Protocol
 		std::string layer = "*";
 
 	public:
-		ProtocolBase(std::string l) : layer(l) {};
+		ProtocolBase(const std::string &l) : layer(l) {};
 		virtual ~ProtocolBase() {}
 
 		ProtocolBase *getPrev() { return prev; }
 		ProtocolBase *getNext() { return next; }
 
-		std::string getLayer() { return layer; }
+		const std::string &getLayer() { return layer; }
 
 		virtual void disconnect()
 		{

@@ -268,7 +268,7 @@ private:
 	PrometheusCounter dataPrometheus;
 	ByteCounter raw_counter;
 
-	std::time_t time_start;
+	std::time_t time_start = 0;
 	std::string station = "\"\"", station_link = "\"\"";
 	std::string os, hardware;
 

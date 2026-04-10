@@ -216,16 +216,17 @@ void Receiver::setupModel(int &group, int idx)
 
 	// set up JSON output channels, still unconnected
 	jsonais.clear();
-	jsonais.resize(models.size());
+	for (size_t i = 0; i < models.size(); i++)
+		jsonais.emplace_back(new AIS::JSONAIS());
 
 	// assign the output of each individual model to a separate group
 	if (group + (int)models.size() >= 32)
 		throw std::runtime_error("Receiver: too many models/receivers, group bit limit exceeded.");
 
-	for (int i = 0; i < models.size(); i++)
+	for (size_t i = 0; i < models.size(); i++)
 	{
 		uint32_t mask = 1u << group;
-		jsonais[i].out.setGroupOut(mask);
+		jsonais[i]->out.setGroupOut(mask);
 		models[i]->Output().out.setGroupOut(mask);
 		models[i]->OutputADSB().out.setGroupOut(mask);
 		group++;
@@ -236,11 +237,11 @@ void Receiver::play()
 {
 
 	// connect the JSON output where and if needed
-	for (int i = 0; i < jsonais.size(); i++)
+	for (size_t i = 0; i < jsonais.size(); i++)
 	{
-		if (jsonais[i].out.isConnected())
+		if (jsonais[i]->out.isConnected())
 		{
-			models[i]->Output() >> jsonais[i];
+			models[i]->Output() >> *jsonais[i];
 		}
 	}
 
@@ -273,12 +274,14 @@ void Receiver::stop()
 void OutputStatistics::connect(Receiver &r)
 {
 
-	statistics.resize(r.Count());
+	statistics.clear();
+	for (int i = 0; i < r.Count(); i++)
+		statistics.emplace_back(new IO::StreamCounter());
 
 	for (int i = 0; i < r.Count(); i++)
 	{
-		r.Output(i).Connect((StreamIn<AIS::Message> *)&statistics[i]);
-		r.OutputADSB(i).Connect((StreamIn<Plane::ADSB> *)&statistics[i]);
+		r.Output(i).Connect((StreamIn<AIS::Message> *)statistics[i].get());
+		r.OutputADSB(i).Connect((StreamIn<Plane::ADSB> *)statistics[i].get());
 	}
 }
 

@@ -860,7 +860,7 @@ namespace AIS
 				error_msg = "tag block: checksum mismatch";
 				return false;
 			}
-			tagBlock = tagBlock.substr(0, checksumPos);
+			tagBlock.resize(checksumPos);
 		}
 
 		// Parse individual fields

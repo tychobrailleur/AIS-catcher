@@ -132,19 +132,15 @@ namespace JSON
 		Value value;
 
 	public:
-		Member(int p, Value v)
+		Member(int p, Value v) : key(p), value(v)
 		{
-			key = p;
-			value = v;
 		}
-		Member(int p, long int v)
+		Member(int p, long int v) : key(p)
 		{
-			key = p;
 			value.setInt(v);
 		}
-		Member(int p, double v)
+		Member(int p, double v) : key(p)
 		{
-			key = p;
 			value.setFloat(v);
 		}
 		Member(int p, bool v)

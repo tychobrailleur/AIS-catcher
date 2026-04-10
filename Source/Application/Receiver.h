@@ -41,7 +41,7 @@ class Receiver;
 class OutputStatistics
 {
 public:
-	std::vector<IO::StreamCounter> statistics;
+	std::vector<std::unique_ptr<IO::StreamCounter>> statistics;
 
 	void connect(Receiver &r);
 	void start();
@@ -65,7 +65,7 @@ class Receiver : public Setting
 	std::string ChannelNMEA = "AB";
 
 	// Output
-	std::vector<AIS::JSONAIS> jsonais;
+	std::vector<std::unique_ptr<AIS::JSONAIS>> jsonais;
 
 	TAG tag;
 
@@ -140,7 +140,7 @@ public:
 	Connection<AIS::GPS> &OutputGPS(int i) { return models[i]->OutputGPS().out; }
 	Connection<Plane::ADSB> &OutputADSB(int i) { return models[i]->OutputADSB().out; }
 
-	Connection<JSON::JSON> &OutputJSON(int i) { return jsonais[i].out; }
+	Connection<JSON::JSON> &OutputJSON(int i) { return jsonais[i]->out; }
 
 	std::unique_ptr<AIS::Model> &addModel(int m);
 	std::unique_ptr<AIS::Model> &Model(int i) { return models[i]; }
@@ -148,7 +148,7 @@ public:
 	uint32_t getGroupMask() const {
 		uint32_t mask = 0;
 		for (int i = 0; i < (int)jsonais.size(); i++)
-			mask |= jsonais[i].out.getGroupOut();
+			mask |= jsonais[i]->out.getGroupOut();
 		return mask;
 	}
 

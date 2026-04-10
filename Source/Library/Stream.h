@@ -19,18 +19,43 @@
 
 #include <vector>
 #include <iostream>
+#include <mutex>
 
 #include "Common.h"
 
 template <typename T>
 class StreamIn {
 	uint64_t groups_in = GROUPS_ALL;
+	int producer_count = 0;
+	std::mutex mtx;
 
 public:
 	virtual ~StreamIn() {}
 	virtual void Receive(const T* data, int len, TAG& tag) {}
 	virtual void Receive(T* data, int len, TAG& tag) {
 		Receive((const T*)data, len, tag);
+	}
+
+	void addProducer() { producer_count++; }
+
+	void ReceiveSafe(const T* data, int len, TAG& tag) {
+		if (producer_count > 1) {
+			std::lock_guard<std::mutex> lock(mtx);
+			Receive(data, len, tag);
+		}
+		else {
+			Receive(data, len, tag);
+		}
+	}
+
+	void ReceiveSafe(T* data, int len, TAG& tag) {
+		if (producer_count > 1) {
+			std::lock_guard<std::mutex> lock(mtx);
+			Receive(data, len, tag);
+		}
+		else {
+			Receive(data, len, tag);
+		}
 	}
 
 	uint64_t getGroupsIn() { return groups_in; }
@@ -44,7 +69,7 @@ class Connection {
 
 public:
 	void Send(const S* data, int len, TAG& tag) {
-		for (auto c : connections) c->Receive(data, len, tag);
+		for (auto c : connections) c->ReceiveSafe(data, len, tag);
 	}
 
 	void Send(S* data, int len, TAG& tag) {
@@ -56,13 +81,14 @@ public:
 		int sz1 = (int)connections.size() - 1;
 
 		for (int i = 0; i < sz1; i++)
-			connections[i]->Receive((const S*)data, len, tag);
+			connections[i]->ReceiveSafe((const S*)data, len, tag);
 
-		connections[sz1]->Receive(data, len, tag);
+		connections[sz1]->ReceiveSafe(data, len, tag);
 	}
 
 	void Connect(StreamIn<S>* s) {
 		connections.push_back(s);
+		s->addProducer();
 	}
 
 	void setGroupOut(uint32_t g) { groups = g; }

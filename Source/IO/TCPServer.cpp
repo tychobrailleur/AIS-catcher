@@ -129,8 +129,16 @@ namespace IO
 			}
 			else if (nread > 0)
 			{
-				msg += std::string(buffer, nread);
-				stamp = std::time(0);
+				if (msg.size() + nread > MAX_BUFFER_SIZE)
+				{
+					Warning() << "TCPServer: input buffer overflow, closing connection";
+					CloseUnsafe();
+				}
+				else
+				{
+					msg += std::string(buffer, nread);
+					stamp = std::time(0);
+				}
 			}
 		}
 	}

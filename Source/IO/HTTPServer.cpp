@@ -229,7 +229,7 @@ namespace IO
 			header += "\r\nPragma: no-cache";
 		}
 
-		header += "\r\nConnection: keep-alive\r\nContent-Length: " + std::to_string(len) + "\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
+		header += "\r\nConnection: keep-alive\r\nContent-Length: " + std::to_string(len) + "\r\n\r\n";
 
 		if (!Send(c, header.c_str(), header.length()))
 		{

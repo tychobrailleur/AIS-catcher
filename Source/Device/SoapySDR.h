@@ -26,9 +26,11 @@
 #include <SoapySDR/Device.hpp>
 #endif
 
-namespace Device {
+namespace Device
+{
 
-	class SoapyDevice {
+	class SoapyDevice
+	{
 		std::string device;
 		int channel = 0;
 		int sample_rate = 0;
@@ -36,13 +38,13 @@ namespace Device {
 	public:
 		SoapyDevice(std::string d, int c, int s) : device(d), channel(c), sample_rate(s) {}
 
-		std::string getDeviceString() { return device; }
+		const std::string &getDeviceString() { return device; }
 		int getChannel() { return channel; }
 		int getDefaultSampleRate() { return sample_rate; }
 	};
 
-
-	class SOAPYSDR : public Device {
+	class SOAPYSDR : public Device
+	{
 
 		// Device settings (always available)
 		std::string device_args;
@@ -54,7 +56,7 @@ namespace Device {
 #ifdef HASSOAPYSDR
 
 		std::vector<SoapyDevice> dev_list;
-		SoapySDR::Device* dev = NULL;
+		SoapySDR::Device *dev = NULL;
 
 		SoapySDR::Kwargs stream_args;
 		SoapySDR::Kwargs setting_args;
@@ -78,7 +80,7 @@ namespace Device {
 		static const uint32_t BUFFER_SIZE = 16 * 16384;
 
 		void applySettings();
-		int findRate(const std::vector<double>&);
+		int findRate(const std::vector<double> &);
 
 	public:
 		// Control
@@ -90,7 +92,7 @@ namespace Device {
 		bool isStreaming() { return Device::isStreaming() && !lost; }
 		bool isCallback() { return true; }
 
-		void getDeviceList(std::vector<Description>& DeviceList);
+		void getDeviceList(std::vector<Description> &DeviceList);
 
 		void setFormat(Format f) {}
 #endif
@@ -101,7 +103,7 @@ namespace Device {
 		std::string getProduct() { return "SOAPYSDR"; }
 
 		// Settings (always available)
-		Setting& SetKey(AIS::Keys key, const std::string &arg);
+		Setting &SetKey(AIS::Keys key, const std::string &arg);
 		std::string Get();
 	};
 }

@@ -45,7 +45,7 @@ struct BinaryMessage
 	int dac;
 	int fi;
 	FLOAT32 lat, lon;
-	time_t timestamp;
+	time_t timestamp = 0;
 	bool used;
 
 	BinaryMessage() { Clear(); }
@@ -66,7 +66,7 @@ class DB : public StreamIn<JSON::JSON>,
 
 	JSON::Serializer builder{JSON_DICT_FULL};
 
-	int first, last, count, path_idx = 0;
+	int first = 0, last = 0, count = 0, path_idx = 0;
 	std::string content, delim;
 	float lat = LAT_UNDEFINED, lon = LON_UNDEFINED;
 	int TIME_HISTORY = 30 * 60;

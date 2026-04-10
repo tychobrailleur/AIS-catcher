@@ -120,56 +120,65 @@ namespace IO
 			send_list.splice(send_list.begin(), msg_list);
 		}
 
-		json.clear();
+		post_body.clear();
 		int r;
 
 		if (protocol == PROTOCOL::AISCATCHER || protocol == PROTOCOL::AIRFRAMES)
 		{
 			const std::string now = Util::Convert::toTimeStr(std::time(0));
 
-			JSON::Writer w(json);
+			JSON::Writer w(post_body);
 			w.beginObject()
-				.kv("protocol", protocol_string).kv("encodetime", now)
-				.kv_raw("stationid", stationid).kv_raw("station_lat", lat).kv_raw("station_lon", lon)
-				.key("receiver").beginObject()
-					.kv("description", "AIS-catcher " VERSION).kv("version", VERSION_NUMBER)
-					.kv_raw("engine", model).kv_raw("setting", model_setting).endObject()
-				.key("device").beginObject()
-					.kv_raw("product", product).kv_raw("vendor", vendor)
-					.kv_raw("serial", serial).kv_raw("setting", device_setting).endObject()
-				.key("msgs").beginArray();
+				.kv("protocol", protocol_string)
+				.kv("encodetime", now)
+				.kv_raw("stationid", stationid)
+				.kv_raw("station_lat", lat)
+				.kv_raw("station_lon", lon)
+				.key("receiver")
+				.beginObject()
+				.kv("description", "AIS-catcher " VERSION)
+				.kv("version", VERSION_NUMBER)
+				.kv_raw("engine", model)
+				.kv_raw("setting", model_setting)
+				.endObject()
+				.key("device")
+				.beginObject()
+				.kv_raw("product", product)
+				.kv_raw("vendor", vendor)
+				.kv_raw("serial", serial)
+				.kv_raw("setting", device_setting)
+				.endObject()
+				.key("msgs")
+				.beginArray();
 			for (const auto &m : send_list)
 				w.raw_val(m);
 			w.endArray().endObject().finish();
 
-			r = http.Post(json, gzip, false, "");
+			r = http.Post(post_body, gzip, false, "");
 		}
 		else if (PROTOCOL::APRS == protocol)
 		{
 			const std::string now = Util::Convert::toTimeStr(std::time(0));
 
-			JSON::Writer w(json);
-			w.beginObject().kv("protocol", "jsonais").kv("encodetime", now)
-				.key("groups").beginArray().beginObject()
-					.key("path").beginArray().beginObject()
-						.kv_raw("name", stationid).kv_raw("url", url_json)
-						.endObject().endArray()
-					.key("msgs").beginArray();
+			JSON::Writer w(post_body);
+			w.beginObject().kv("protocol", "jsonais").kv("encodetime", now).key("groups").beginArray().beginObject().key("path").beginArray().beginObject().kv_raw("name", stationid).kv_raw("url", url_json).endObject().endArray().key("msgs").beginArray();
+
 			for (const auto &m : send_list)
 				w.raw_val(m);
+
 			w.endArray().endObject().endArray().endObject().finish();
 
-			r = http.Post(json, gzip, true, "jsonais");
+			r = http.Post(post_body, gzip, true, "jsonais");
 		}
 		else
 		{
 			for (const auto &m : send_list)
 			{
-				json += m;
-				json += '\n';
+				post_body += m;
+				post_body += '\n';
 			}
 
-			r = http.Post(json, gzip, false, "");
+			r = http.Post(post_body, gzip, false, "");
 		}
 
 		if (r < 200 || r > 299)
@@ -356,52 +365,13 @@ namespace IO
 		if (sock == -1)
 			return;
 
-		if (fmt == MessageFormat::NMEA)
+		for (int i = 0; i < len; i++)
 		{
-			for (int i = 0; i < len; i++)
-			{
-				if (!filter.include(data[i]))
-					continue;
+			if (!filter.include(data[i]))
+				continue;
 
-				for (const auto &s : data[i].NMEA)
-					SendTo((s + "\r\n").c_str());
-			}
-		}
-		else if (fmt == MessageFormat::NMEA_TAG)
-		{
-			for (int i = 0; i < len; i++)
-			{
-				if (!filter.include(data[i]))
-					continue;
-
-				json.clear();
-				data[i].getNMEATagBlock(json);
-				SendTo(json.data(), (int)json.size());
-			}
-		}
-		else if (fmt == MessageFormat::BINARY_NMEA)
-		{
-			for (int i = 0; i < len; i++)
-			{
-				if (!filter.include(data[i]))
-					continue;
-
-				json.clear();
-				data[i].getBinaryNMEA(json, tag);
-				SendTo(json.data(), (int)json.size());
-			}
-		}
-		else
-		{
-			for (int i = 0; i < len; i++)
-			{
-				if (filter.include(data[i]))
-				{
-					json.clear();
-					data[i].getNMEAJSON(json, tag.mode, tag.level, tag.ppm, tag.status, tag.hardware, tag.version, tag.driver, include_sample_start, tag.ipv4, uuid, "\r\n");
-					SendTo(json.data(), (int)json.size());
-				}
-			}
+			formatInto(data[i], tag, include_sample_start, uuid, "\r\n");
+			SendTo(json.data(), (int)json.size());
 		}
 	}
 
@@ -591,81 +561,28 @@ namespace IO
 
 	void TCPClientStreamer::Receive(const AIS::Message *data, int len, TAG &tag)
 	{
-		if (fmt == MessageFormat::NMEA)
-		{
-			for (int i = 0; i < len; i++)
-			{
-				if (!filter.include(data[i]))
-					continue;
+		// COMMUNITY_HUB: use binary format except for first send and every 100th line
+		bool use_binary = (fmt == MessageFormat::COMMUNITY_HUB && !isFirstDataSend() && lines_sent % 100 != 0);
 
-				for (const auto &s : data[i].NMEA)
-				{
-					if (SendTo((s + "\r\n").c_str()) < 0)
-					{
-						if (!persistent)
-						{
-							Error() << "TCP feed: requesting termination.";
-							StopRequest();
-						}
-					}
-				}
-			}
-		}
-		else if (fmt == MessageFormat::NMEA_TAG)
+		for (int i = 0; i < len; i++)
 		{
-			for (int i = 0; i < len; i++)
-			{
-				if (!filter.include(data[i]))
-					continue;
+			if (!filter.include(data[i]))
+				continue;
 
-				json.clear();
-				data[i].getNMEATagBlock(json);
-				if (SendTo(json.data(), (int)json.size()) < 0)
-				{
-					if (!persistent)
-					{
-						Error() << "TCP feed: requesting termination.";
-						StopRequest();
-					}
-				}
-			}
-		}
-		else if ((fmt == MessageFormat::COMMUNITY_HUB && !isFirstDataSend() && lines_sent % 100 != 0) || fmt == MessageFormat::BINARY_NMEA)
-		{
-			for (int i = 0; i < len; i++)
+			if (use_binary)
 			{
-				if (!filter.include(data[i]))
-					continue;
-
 				json.clear();
 				data[i].getBinaryNMEA(json, tag);
-				if (SendTo(json.data(), (int)json.size()) < 0)
-				{
-					if (!persistent)
-					{
-						Error() << "TCP feed: requesting termination.";
-						StopRequest();
-					}
-				}
 			}
-		}
-		else
-		{
-			for (int i = 0; i < len; i++)
+			else
 			{
-				if (!filter.include(data[i]))
-					continue;
+				formatInto(data[i], tag, include_sample_start, uuid, "\r\n");
+			}
 
-				json.clear();
-				data[i].getNMEAJSON(json, tag.mode, tag.level, tag.ppm, tag.status, tag.hardware, tag.version, tag.driver, include_sample_start, tag.ipv4, uuid, "\r\n");
-				if (SendTo(json.data(), (int)json.size()) < 0)
-				{
-					if (!persistent)
-					{
-						Error() << "TCP feed: requesting termination.";
-						StopRequest();
-					}
-				}
+			if (SendTo(json.data(), (int)json.size()) < 0 && !persistent)
+			{
+				Error() << "TCP feed: requesting termination.";
+				StopRequest();
 			}
 		}
 	}
@@ -834,54 +751,13 @@ namespace IO
 
 	void TCPlistenerStreamer::Receive(const AIS::Message *data, int len, TAG &tag)
 	{
-		if (fmt == MessageFormat::NMEA)
+		for (int i = 0; i < len; i++)
 		{
-			for (int i = 0; i < len; i++)
-			{
-				if (!filter.include(data[i]))
-					continue;
+			if (!filter.include(data[i]))
+				continue;
 
-				for (const auto &s : data[i].NMEA)
-				{
-					SendAllDirect(s + "\r\n");
-				}
-			}
-		}
-		else if (fmt == MessageFormat::NMEA_TAG)
-		{
-			for (int i = 0; i < len; i++)
-			{
-				if (!filter.include(data[i]))
-					continue;
-
-				json.clear();
-				data[i].getNMEATagBlock(json);
-				SendAllDirect(json.data(), (int)json.size());
-			}
-		}
-		else if (fmt == MessageFormat::BINARY_NMEA)
-		{
-			for (int i = 0; i < len; i++)
-			{
-				if (!filter.include(data[i]))
-					continue;
-
-				json.clear();
-				data[i].getBinaryNMEA(json, tag);
-				SendAllDirect(json.data(), (int)json.size());
-			}
-		}
-		else
-		{
-			for (int i = 0; i < len; i++)
-			{
-				if (!filter.include(data[i]))
-					continue;
-
-				json.clear();
-				data[i].getNMEAJSON(json, tag.mode, tag.level, tag.ppm, tag.status, tag.hardware, tag.version, tag.driver, include_sample_start, tag.ipv4, "", "\r\n");
-				SendAllDirect(json.data(), (int)json.size());
-			}
+			formatInto(data[i], tag, include_sample_start, "", "\r\n");
+			SendAllDirect(json.data(), (int)json.size());
 		}
 	}
 
@@ -966,31 +842,8 @@ namespace IO
 			if (!filter.include(data[i]))
 				continue;
 
-			if (fmt == MessageFormat::NMEA)
-			{
-				for (const auto &s : data[i].NMEA)
-				{
-					((Protocol::MQTT *)session)->send((s + "\r\n").c_str(), s.length() + 2, topic_template.get(tag, data[0]));
-				}
-			}
-			else if (fmt == MessageFormat::NMEA_TAG)
-			{
-				json.clear();
-				data[i].getNMEATagBlock(json);
-				((Protocol::MQTT *)session)->send(json.data(), (int)json.size(), topic_template.get(tag, data[0]));
-			}
-			else if (fmt == MessageFormat::BINARY_NMEA)
-			{
-				json.clear();
-				data[i].getBinaryNMEA(json, tag);
-				((Protocol::MQTT *)session)->send(json.data(), (int)json.size(), topic_template.get(tag, data[0]));
-			}
-			else
-			{
-				json.clear();
-				data[i].getNMEAJSON(json, tag.mode, tag.level, tag.ppm, tag.status, tag.hardware, tag.version, tag.driver, false, tag.ipv4, "", "\n");
-				((Protocol::MQTT *)session)->send(json.data(), (int)json.size(), topic_template.get(tag, data[0]));
-			}
+			formatInto(data[i], tag, false, "", "\r\n");
+			((Protocol::MQTT *)session)->send(json.data(), (int)json.size(), topic_template.get(tag, data[0]));
 		}
 
 		session->read(nullptr, 0, 0, false);
@@ -1003,7 +856,7 @@ namespace IO
 			if (filter.include(*(AIS::Message *)data[i].binary))
 			{
 				json.clear();
-				builder.stringify(data[i], json, "\n");
+				builder.stringify(data[i], json, "\r\n");
 				((Protocol::MQTT *)session)->send(json.data(), (int)json.size(), topic_template.get(tag, *((AIS::Message *)data[0].binary)));
 			}
 		}

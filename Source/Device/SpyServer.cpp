@@ -315,7 +315,8 @@ namespace Device
 
 			if (remainingBytes)
 			{
-				int len = client.read(data.data(), remainingBytes, timeout, false);
+				int toRead = remainingBytes < (int)BUFFER_SIZE ? remainingBytes : (int)BUFFER_SIZE;
+				int len = client.read(data.data(), toRead, timeout, false);
 
 				if (len <= 0)
 				{

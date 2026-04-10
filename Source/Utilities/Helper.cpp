@@ -200,7 +200,7 @@ namespace Util
 				if (model == "5-compute-module")
 					return "Raspberry Pi Compute Module 5";
 				// Future-proofing: some distros/DTs may append qualifiers.
-				if (model.find("5-compute-module") == 0)
+				if (model.compare(0, 16, "5-compute-module") == 0)
 				{
 					if (model.find("lite") != std::string::npos)
 						return "Raspberry Pi Compute Module 5 Lite";

@@ -52,7 +52,7 @@ namespace AIS
 			uint16_t data_offset = 0;
 			uint16_t data_len = 0;
 
-			uint64_t timestamp;
+			uint64_t timestamp = 0;
 			int groupId = 0; // NMEA 4.0 tag block group ID
 
 			void reset()
@@ -64,19 +64,19 @@ namespace AIS
 				groupId = 0;
 				message_error = 0;
 			}
-			char channel;
-			int count;
-			int number;
-			int ID;
-			int checksum;
-			int fillbits;
-			int talkerID;
+			char channel = 0;
+			int count = 0;
+			int number = 0;
+			int ID = 0;
+			int checksum = 0;
+			int fillbits = 0;
+			int talkerID = 0;
 			uint32_t message_error;
 		} aivdm;
 
 		// Zero-allocation field splitter: stores delimiter positions into source string
 		const std::string *splitStr = nullptr;
-		int splitDelim[18]; // delimiter positions (leading sentinel + up to 16 commas + trailing sentinel)
+		int splitDelim[18] = {}; // delimiter positions (leading sentinel + up to 16 commas + trailing sentinel)
 		int splitCount = 0; // number of fields
 		int splitChecksum = 0; // XOR checksum accumulated during split
 
@@ -92,7 +92,7 @@ namespace AIS
 		ParseState state = ParseState::IDLE;
 		std::string line;
 		bool hasStar = false;
-		int count;
+		int count = 0;
 		int own_mmsi = -1;
 
 		std::vector<AIVDM> queue;

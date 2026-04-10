@@ -99,11 +99,19 @@ namespace Device
 
 	public:
 		RTLSDR() : Device(Format::CU8, 1536000, Type::RTLSDR, "RTLSDR") {}
-		~RTLSDR() { Close(); }
+		~RTLSDR()
+		{
+			try
+			{
+				Close();
+			}
+			catch (...)
+			{
+			}
+		}
 
 		// Settings (always available)
 		Setting &SetKey(AIS::Keys key, const std::string &arg) override;
 		std::string Get() override;
-
 	};
 }

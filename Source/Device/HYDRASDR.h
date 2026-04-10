@@ -56,7 +56,7 @@ namespace Device
 		struct hydrasdr_device *dev = nullptr;
 		bool lost = false;
 		std::vector<uint32_t> rates;
-		uint64_t serial;
+		uint64_t serial = 0;
 
 		static int callback_static(hydrasdr_transfer *tf);
 		void callback(CFLOAT32 *, int);

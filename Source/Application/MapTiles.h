@@ -47,12 +47,12 @@ public:
     virtual const std::vector<unsigned char> &getTile(int z, int x, int y, std::string &s) = 0;
     virtual std::string generatePluginCode(bool overlay) const = 0;
 
-    std::string getName() const { return name; }
-    std::string getAttribution() const { return attribution; }
+    const std::string &getName() const { return name; }
+    const std::string &getAttribution() const { return attribution; }
     int getMinZoom() const { return minZoom; }
     int getMaxZoom() const { return maxZoom; }
-    std::string getFormat() const { return format; }
-    std::string getLayerID() const { return layerID; }
+    const std::string &getFormat() const { return format; }
+    const std::string &getLayerID() const { return layerID; }
 
     bool isValidCoordinate(int z, int x, int y) const;
 };

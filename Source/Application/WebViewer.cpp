@@ -26,10 +26,10 @@ IO::OutputMessage *comm_feed = nullptr;
 // --- PluginManager ---
 
 PluginManager::PluginManager()
+	: params("build_string = '" + std::string(VERSION_DESCRIBE) + "';\nbuild_version = '" + std::string(VERSION) + "';\ncontext='settings';\n\n"),
+	  plugin_code("\n\nfunction loadPlugins() {\n"),
+	  plugin_preamble("let plugins = '';\nlet server_message = '';\n")
 {
-	params = "build_string = '" + std::string(VERSION_DESCRIBE) + "';\nbuild_version = '" + std::string(VERSION) + "';\ncontext='settings';\n\n";
-	plugin_code = "\n\nfunction loadPlugins() {\n";
-	plugin_preamble = "let plugins = '';\nlet server_message = '';\n";
 }
 
 void PluginManager::setContext(const std::string &ctx)
@@ -271,10 +271,10 @@ void SSEStreamer::Receive(const JSON::JSON *data, int len, TAG &tag)
 	}
 }
 
-WebViewer::WebViewer() : Setting("WebViewer")
+WebViewer::WebViewer() : Setting("WebViewer"),
+	os(JSON::stringify(Util::Helper::getOS())),
+	hardware(JSON::stringify(Util::Helper::getHardware()))
 {
-	os = JSON::stringify(Util::Helper::getOS());
-	hardware = JSON::stringify(Util::Helper::getHardware());
 }
 
 std::string WebViewer::decodeNMEAtoJSON(const std::string &nmea_input, bool enhanced)

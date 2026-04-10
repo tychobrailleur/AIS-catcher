@@ -55,7 +55,7 @@ namespace Device
 		struct airspy_device *dev = nullptr;
 		bool lost = false;
 		std::vector<uint32_t> rates;
-		uint64_t serial;
+		uint64_t serial = 0;
 
 		static int callback_static(airspy_transfer_t *tf);
 		void callback(CFLOAT32 *, int);

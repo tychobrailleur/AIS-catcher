@@ -47,7 +47,7 @@ namespace Device {
 
 		std::string toString() { return vendor + ", " + product + ", SN: " + serial; }
 
-		std::string getSerial() { return serial; }
+		const std::string &getSerial() { return serial; }
 		Type getType() { return type; }
 		uint64_t getHandle() { return handle; }
 	};

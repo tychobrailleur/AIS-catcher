@@ -35,7 +35,7 @@ namespace Util
 		TemplateString(const std::string &t) : tpl(t) {}
 		void set(const std::string &t);
 		std::string get(const TAG &tag, const AIS::Message &msg) const;
-		std::string getTemplate() const
+		const std::string &getTemplate() const
 		{
 			return tpl;
 		}

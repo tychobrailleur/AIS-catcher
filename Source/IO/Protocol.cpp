@@ -1413,7 +1413,7 @@ namespace Protocol
 			{
 				accept_key = line.substr(line.find(":") + 2); // Add 2 to skip ": "
 				// Remove trailing whitespace and CR/LF
-				accept_key = accept_key.substr(0, accept_key.find_last_not_of(" \r\n") + 1);
+				accept_key.resize(accept_key.find_last_not_of(" \r\n") + 1);
 				break;
 			}
 		}

@@ -44,6 +44,33 @@ namespace IO
 		OutputStats stats;
 		std::string description, type;
 
+		// Formats one AIS message into the reusable `json` member buffer.
+		// Zero-allocation in steady state: clear() preserves capacity.
+		void formatInto(const AIS::Message &msg, TAG &tag,
+						bool sample_start, const std::string &uuid, const char *suffix)
+		{
+			json.clear();
+			switch (fmt)
+			{
+			case MessageFormat::NMEA:
+				for (const auto &s : msg.NMEA)
+				{
+					json += s;
+					json += suffix;
+				}
+				break;
+			case MessageFormat::NMEA_TAG:
+				msg.getNMEATagBlock(json);
+				break;
+			case MessageFormat::BINARY_NMEA:
+				msg.getBinaryNMEA(json, tag);
+				break;
+			default:
+				msg.getNMEAJSON(json, tag.mode, tag.level, tag.ppm, tag.status, tag.hardware, tag.version, tag.driver, sample_start, tag.ipv4, uuid, suffix);
+				break;
+			}
+		}
+
 	public:
 		std::vector<std::string> zones;
 

@@ -38,7 +38,6 @@ namespace IO
 
 	class N2KStreamer : public IO::OutputMessage
 	{
-		AIS::Filter filter;
 		std::string dev = "can0";
 
 #ifdef HASNMEA2000

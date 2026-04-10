@@ -64,6 +64,11 @@ option(SQLITE "Include SQLITE support" ON)
 option(OPENSSL "Include OPENSSL support" ON)
 option(NMEA2000 "Include NMEA2000 support" ON)
 option(ARMV6 "Compile for Raspberry Pi Zero" OFF)
+option(RBIT "Use ARM RBIT instruction for bit reversal" OFF)
+
+if(RBIT)
+    add_definitions(-DHASRBIT)
+endif()
 
 set(NMEA2000_PATH "." CACHE PATH "Path to NMEA2000 library")
 
@@ -94,7 +99,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     add_compile_options("-Wno-psabi")
     add_compile_options("-Wno-sign-compare")
 elseif(MSVC)
-    set(OPTIMIZATION_FLAGS "-DWIN32_LEAN_AND_MEAN /EHsc /Oi /Ot /fp:fast") # spellchecker:disable-line
+    set(OPTIMIZATION_FLAGS "-DWIN32_LEAN_AND_MEAN /EHsc /W3 /Oi /Ot /fp:fast") # spellchecker:disable-line
 endif()
 
 set(CMAKE_CXX_FLAGS "${OPTIMIZATION_FLAGS}")

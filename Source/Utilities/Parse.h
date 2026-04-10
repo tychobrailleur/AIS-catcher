@@ -28,8 +28,8 @@ namespace Util
 	class Parse
 	{
 	public:
-		static long Integer(std::string str, long min = 0, long max = 0, const std::string &setting = "");
-		static double Float(std::string str, double min = -1e30, double max = +1e30);
+		static long Integer(const std::string &str, long min = 0, long max = 0, const std::string &setting = "");
+		static double Float(const std::string &str, double min = -1e30, double max = +1e30);
 		static bool StreamFormat(std::string str, Format &format);
 		static bool DeviceType(std::string str, Type &type);
 		static bool Protocol(std::string str, PROTOCOL &protocol);

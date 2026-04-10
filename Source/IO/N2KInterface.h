@@ -58,7 +58,7 @@ namespace N2K
 		void waitForFrame(int m);
 		void Close();
 
-		void setNetwork(std::string n) { CANinterface = n; }
+		void setNetwork(const std::string &n) { CANinterface = n; }
 	};
 
 	extern tNMEA2000_SKTCAN NMEA2000;
@@ -118,7 +118,7 @@ namespace N2K
 			output = true;
 		}
 
-		void setNetwork(std::string n)
+		void setNetwork(const std::string &n)
 		{
 			if (!network.empty() && n != network)
 			{

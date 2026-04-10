@@ -33,6 +33,8 @@
 
 #include "Device/Device.h"
 
+constexpr int N_SAMPLES_PER_SYMBOL = 5;
+
 namespace AIS
 {
 	enum class Mode
@@ -52,45 +54,6 @@ namespace AIS
 		BASESTATION
 	};
 
-	// idea is to avoid that message threads from different devices cause issues downstream (e.g. with sending UDP or updating the database).
-	// can also be done further downstream
-	class MessageMutex : public SimpleStreamInOut<AIS::Message, AIS::Message>
-	{
-		static std::mutex mtx;
-
-	public:
-		virtual ~MessageMutex() {}
-		virtual void Receive(const AIS::Message *data, int len, TAG &tag)
-		{
-			std::lock_guard<std::mutex> lock(mtx);
-			Send(data, len, tag);
-		}
-		virtual void Receive(AIS::Message *data, int len, TAG &tag)
-		{
-			std::lock_guard<std::mutex> lock(mtx);
-			Send(data, len, tag);
-		}
-	};
-
-	// idea is to avoid that message threads from different devices cause issues downstream (e.g. with sending UDP or updating the database).
-	// can also be done further downstream
-	class MessageMutexADSB : public SimpleStreamInOut<Plane::ADSB, Plane::ADSB>
-	{
-		static std::mutex mtx;
-
-	public:
-		virtual ~MessageMutexADSB() {}
-		virtual void Receive(const Plane::ADSB *data, int len, TAG &tag)
-		{
-			std::lock_guard<std::mutex> lock(mtx);
-			Send(data, len, tag);
-		}
-		virtual void Receive(Plane::ADSB *data, int len, TAG &tag)
-		{
-			std::lock_guard<std::mutex> lock(mtx);
-			Send(data, len, tag);
-		}
-	};
 
 	// Abstract demodulation model
 	class Model : public Setting
@@ -103,10 +66,10 @@ namespace AIS
 		Mode mode = Mode::AB;
 		std::string designation = "AB";
 
-		Device::Device *device;
+		Device::Device *device = nullptr;
 		Util::Timer<RAW> timer;
-		MessageMutex output;
-		MessageMutexADSB outputADSB;
+		Util::PassThrough<Message> output;
+		Util::PassThrough<Plane::ADSB> outputADSB;
 		Util::PassThrough<GPS> output_gps;
 
 	public:
@@ -118,8 +81,8 @@ namespace AIS
 		StreamOut<GPS> &OutputGPS() { return output_gps; }
 		StreamOut<Plane::ADSB> &OutputADSB() { return outputADSB; }
 
-		void setName(std::string s) { name = s; }
-		std::string getName() { return name; }
+		void setName(const std::string &s) { name = s; }
+		const std::string &getName() { return name; }
 
 		float getTotalTiming() { return timer.getTotalTiming(); }
 
@@ -173,8 +136,6 @@ namespace AIS
 		bool MA_DS = false;
 		bool allowDSK = false;
 
-		const int nSymbolsPerSample = 48000 / 9600;
-
 		Connection<CFLOAT32> *C_a = nullptr, *C_b = nullptr;
 		DSP::Rotate ROT;
 
@@ -196,7 +157,7 @@ namespace AIS
 		Demod::FM FM_a, FM_b;
 
 		DSP::Filter FR_a, FR_b;
-		std::vector<AIS::Decoder> DEC_a, DEC_b;
+		AIS::Decoder DEC_a[N_SAMPLES_PER_SYMBOL], DEC_b[N_SAMPLES_PER_SYMBOL];
 		DSP::Deinterleave<FLOAT32> S_a, S_b;
 
 	public:
@@ -219,11 +180,11 @@ namespace AIS
 	class ModelDefault : public ModelFrontend
 	{
 		DSP::SquareFreqOffsetCorrection CGF_a, CGF_b;
-		std::vector<Demod::PhaseSearch> CD_a, CD_b;
-		std::vector<Demod::PhaseSearchEMA> CD_EMA_a, CD_EMA_b;
+		Demod::PhaseSearch CD_a[N_SAMPLES_PER_SYMBOL], CD_b[N_SAMPLES_PER_SYMBOL];
+		Demod::PhaseSearchEMA CD_EMA_a[N_SAMPLES_PER_SYMBOL], CD_EMA_b[N_SAMPLES_PER_SYMBOL];
 
 		DSP::FilterComplex FC_a, FC_b;
-		std::vector<AIS::Decoder> DEC_a, DEC_b;
+		AIS::Decoder DEC_a[N_SAMPLES_PER_SYMBOL], DEC_b[N_SAMPLES_PER_SYMBOL];
 		DSP::ScatterPLL S_a, S_b;
 
 	protected:
@@ -247,10 +208,10 @@ namespace AIS
 		DSP::FilterComplex FC_a, FC_b;
 		DSP::Filter FR_af, FR_bf;
 
-		std::vector<Demod::PhaseSearchEMA> CD_EMA_a, CD_EMA_b;
+		Demod::PhaseSearchEMA CD_EMA_a[N_SAMPLES_PER_SYMBOL], CD_EMA_b[N_SAMPLES_PER_SYMBOL];
 		Demod::FM FM_af, FM_bf;
 
-		std::vector<AIS::Decoder> DEC_a, DEC_b, DEC_af, DEC_bf;
+		AIS::Decoder DEC_a[N_SAMPLES_PER_SYMBOL], DEC_b[N_SAMPLES_PER_SYMBOL], DEC_af[N_SAMPLES_PER_SYMBOL], DEC_bf[N_SAMPLES_PER_SYMBOL];
 		DSP::ScatterPLL S_a, S_b;
 
 		DSP::Deinterleave<CFLOAT32> throttle_a, throttle_b;
@@ -277,7 +238,7 @@ namespace AIS
 		DSP::Upsample US;
 
 		DSP::Filter FR_a, FR_b;
-		std::vector<AIS::Decoder> DEC_a, DEC_b;
+		AIS::Decoder DEC_a[N_SAMPLES_PER_SYMBOL], DEC_b[N_SAMPLES_PER_SYMBOL];
 		DSP::Deinterleave<FLOAT32> S_a, S_b;
 
 		Util::ConvertRAW convert;

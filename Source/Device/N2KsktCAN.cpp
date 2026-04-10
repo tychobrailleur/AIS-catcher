@@ -49,7 +49,7 @@ namespace Device
 			else
 			{
 				Error() << "Requested interface #" << h << " is not available";
-				for (auto i : available_interfaces)
+				for (const auto &i : available_interfaces)
 					Error() << "Available interface: " << i;
 				throw std::runtime_error("NMEA2000: No available interfaces.");
 			}

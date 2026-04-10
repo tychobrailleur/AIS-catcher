@@ -57,7 +57,4 @@ struct RunState {
 		receivers.push_back(std::unique_ptr<Receiver>(new Receiver()));
 	}
 
-	void reset() {
-		*this = RunState();
-	}
 };

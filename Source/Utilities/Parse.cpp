@@ -25,7 +25,7 @@
 
 namespace Util
 {
-	long Parse::Integer(std::string str, long min, long max, const std::string &setting)
+	long Parse::Integer(const std::string &str, long min, long max, const std::string &setting)
 	{
 		long number = 0;
 		size_t sz = str.length();
@@ -57,7 +57,7 @@ namespace Util
 		return number;
 	}
 
-	double Parse::Float(std::string str, double min, double max)
+	double Parse::Float(const std::string &str, double min, double max)
 	{
 		double number = 0;
 
@@ -99,7 +99,7 @@ namespace Util
 		if (idx != std::string::npos)
 		{
 			path = s.substr(idx);
-			s = s.substr(0, idx);
+			s.resize(idx);
 		}
 
 		size_t at_pos = s.find('@');

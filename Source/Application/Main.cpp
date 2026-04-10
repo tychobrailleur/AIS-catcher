@@ -260,12 +260,12 @@ static void parseSettings(Setting &s, char *argv[], int ptr, int argc)
 	}
 }
 
-static bool isOption(std::string s)
+static bool isOption(const std::string &s)
 {
 	return s.length() >= 2 && s[0] == '-' && std::isalpha(s[1]);
 }
 
-static void Assert(bool b, std::string &context, std::string msg = "")
+static void Assert(bool b, std::string &context, const std::string &msg = "")
 {
 	if (!b)
 	{
@@ -435,10 +435,10 @@ static void run(RunState &state)
 				{
 					for (int j = 0; j < r.Count(); j++)
 					{
-						state.stat[i].statistics[j].Stamp();
+						state.stat[i].statistics[j]->Stamp();
 						std::string name = r.Model(j)->getName() + " #" + std::to_string(i) + "-" + std::to_string(j);
-						Info() << "[" << name << "] " << std::string(name.length() < 37 ? 37 - name.length() : 0, ' ') << "received: " << state.stat[i].statistics[j].getDeltaCount() << " msgs, total: "
-							   << state.stat[i].statistics[j].getCount() << " msgs, rate: " << state.stat[i].statistics[j].getRate() << " msg/s";
+						Info() << "[" << name << "] " << std::string(name.length() < 37 ? 37 - name.length() : 0, ' ') << "received: " << state.stat[i].statistics[j]->getDeltaCount() << " msgs, total: "
+							   << state.stat[i].statistics[j]->getCount() << " msgs, rate: " << state.stat[i].statistics[j]->getRate() << " msg/s";
 					}
 				}
 			}
@@ -450,10 +450,10 @@ static void run(RunState &state)
 
 			for (int i = 0; i < (int)state.receivers.size(); i++)
 			{
-				if (state.stat[i].statistics[0].getCount() == state.msg_count[i])
+				if (state.stat[i].statistics[0]->getCount() == state.msg_count[i])
 					one_stale = true;
 
-				state.msg_count[i] = state.stat[i].statistics[0].getCount();
+				state.msg_count[i] = state.stat[i].statistics[0]->getCount();
 			}
 
 			if (!one_stale)
@@ -485,8 +485,8 @@ static void run(RunState &state)
 			for (int j = 0; j < r.Count(); j++)
 			{
 				std::string name = r.Model(j)->getName() + " #" + std::to_string(i) + "-" + std::to_string(j);
-				state.stat[i].statistics[j].Stamp();
-				ss << "[" << name << "] " << std::string(name.length() < 37 ? 37 - name.length() : 0, ' ') << "total: " << state.stat[i].statistics[j].getCount() << " msgs" << "\n";
+				state.stat[i].statistics[j]->Stamp();
+				ss << "[" << name << "] " << std::string(name.length() < 37 ? 37 - name.length() : 0, ' ') << "total: " << state.stat[i].statistics[j]->getCount() << " msgs" << "\n";
 			}
 		}
 
