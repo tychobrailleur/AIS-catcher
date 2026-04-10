@@ -66,10 +66,12 @@ namespace AIS
 	void NMEA::initMsg(char channel, int src)
 	{
 		msg.clear();
+
 		if (cfg_stamp || mctx.rxtime == 0)
 			msg.Stamp();
 		else
 			msg.setRxTimeMicros(mctx.rxtime);
+		
 		msg.setTOA(mctx.toa);
 		msg.setOrigin(channel, src, own_mmsi);
 	}
@@ -536,9 +538,11 @@ namespace AIS
 				}
 				case AIS::KEY_SIGNAL_POWER:
 				case AIS::KEY_DBM:
+				case AIS::KEY_RSSI:
 					tag.level = p.Get().getFloat(LEVEL_UNDEFINED);
 					break;
 				case AIS::KEY_PPM:
+				case AIS::KEY_FO:
 					tag.ppm = p.Get().getFloat(PPM_UNDEFINED);
 					break;
 				case AIS::KEY_RXUXTIME:
