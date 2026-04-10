@@ -139,9 +139,8 @@ namespace JSON
 			currentType = TokenType::Comma;
 			p++;
 			break;
-
 		case 't':
-			if (p + 4 <= pend && p[1] == 'r' && p[2] == 'u' && p[3] == 'e')
+			if (p + 4 <= pend && memcmp(p + 1, "rue", 3) == 0)
 			{
 				currentType = TokenType::True;
 				tokenStart = p;
@@ -152,7 +151,7 @@ namespace JSON
 				error("illegal identifier", (int)(p - p_start));
 			break;
 		case 'f':
-			if (p + 5 <= pend && p[1] == 'a' && p[2] == 'l' && p[3] == 's' && p[4] == 'e')
+			if (p + 5 <= pend && memcmp(p + 1, "alse", 4) == 0)
 			{
 				currentType = TokenType::False;
 				tokenStart = p;
@@ -163,7 +162,7 @@ namespace JSON
 				error("illegal identifier", (int)(p - p_start));
 			break;
 		case 'n':
-			if (p + 4 <= pend && p[1] == 'u' && p[2] == 'l' && p[3] == 'l')
+			if (p + 4 <= pend && memcmp(p + 1, "ull", 3) == 0)
 			{
 				currentType = TokenType::Null;
 				tokenStart = p;
