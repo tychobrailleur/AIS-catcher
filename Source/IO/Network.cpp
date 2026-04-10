@@ -561,23 +561,12 @@ namespace IO
 
 	void TCPClientStreamer::Receive(const AIS::Message *data, int len, TAG &tag)
 	{
-		// COMMUNITY_HUB: use binary format except for first send and every 100th line
-		bool use_binary = (fmt == MessageFormat::COMMUNITY_HUB && !isFirstDataSend() && lines_sent % 100 != 0);
-
 		for (int i = 0; i < len; i++)
 		{
 			if (!filter.include(data[i]))
 				continue;
 
-			if (use_binary)
-			{
-				json.clear();
-				data[i].getBinaryNMEA(json, tag);
-			}
-			else
-			{
-				formatInto(data[i], tag, include_sample_start, uuid, "\r\n");
-			}
+			formatInto(data[i], tag, include_sample_start, uuid, "\r\n");
 
 			if (SendTo(json.data(), (int)json.size()) < 0 && !persistent)
 			{

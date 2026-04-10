@@ -43,6 +43,7 @@ namespace IO
 
 		OutputStats stats;
 		std::string description, type;
+		unsigned long lines_sent = 0;
 
 		// Formats one AIS message into the reusable `json` member buffer.
 		// Zero-allocation in steady state: clear() preserves capacity.
@@ -65,10 +66,17 @@ namespace IO
 			case MessageFormat::BINARY_NMEA:
 				msg.getBinaryNMEA(json, tag);
 				break;
+			case MessageFormat::COMMUNITY_HUB:
+				if (lines_sent > 0 && lines_sent % 100 != 0)
+					msg.getBinaryNMEA(json, tag);
+				else
+					msg.getNMEAJSON(json, tag.mode, tag.level, tag.ppm, tag.status, tag.hardware, tag.version, tag.driver, sample_start, tag.ipv4, uuid, suffix);
+				break;
 			default:
 				msg.getNMEAJSON(json, tag.mode, tag.level, tag.ppm, tag.status, tag.hardware, tag.version, tag.driver, sample_start, tag.ipv4, uuid, suffix);
 				break;
 			}
+			lines_sent++;
 		}
 
 	public:

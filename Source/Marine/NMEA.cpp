@@ -26,12 +26,10 @@ namespace AIS
 
 	const std::string empty;
 
-	void NMEA::reset(char c)
+	void NMEA::reset()
 	{
 		state = ParseState::IDLE;
 		line.clear();
-		hasStar = false;
-		prev = c;
 	}
 
 	void NMEA::clean(char c, int t, int groupId)
@@ -50,10 +48,9 @@ namespace AIS
 		}
 	}
 
-	int NMEA::search(const AIVDM &a)
+	int NMEA::search()
 	{
-		// multiline message, find previous lines with matching group
-		// return: 0 = Not Found, -1: Found but inconsistent with input, >0: number of previous message
+		// return: 0 = Not Found, -1: Found but inconsistent, >0: number of last queued part
 		int lastNumber = 0;
 		for (auto it = queue.rbegin(); it != queue.rend(); it++)
 		{
@@ -72,114 +69,63 @@ namespace AIS
 		return lastNumber;
 	}
 
-	int NMEA::NMEAchecksum(const std::string &s)
+	void NMEA::initMsg(char channel, int src)
 	{
-		int c = 0;
-		if (s.length() > 4) // Need at least "$X*XX" format
-		{
-			for (size_t i = 1; i < s.length() - 3; i++)
-				c ^= s[i];
-		}
-		return c;
+		msg.clear();
+		if (cfg_stamp || mctx.rxtime == 0)
+			msg.Stamp();
+		else
+			msg.setRxTimeMicros(mctx.rxtime);
+		msg.setTOA(mctx.toa);
+		msg.setOrigin(channel, src, own_mmsi);
 	}
 
-	void NMEA::submitAIS(TAG &tag, int64_t t, uint64_t ssc, uint16_t sl, int thisstation, int64_t toa)
+	void NMEA::dispatchAIS(TAG &tag)
 	{
-		bool checksum_error = aivdm.checksum != splitChecksum;
+		int src = (mctx.station == -1) ? station : mctx.station;
 
-		if (checksum_error)
-		{
-			if (warnings)
-				Warning() << "NMEA: incorrect checksum [" << aivdm.sentence << "] from station " << (thisstation == -1 ? station : thisstation) << ".";
-
-			if (crc_check)
-				return;
-
-			aivdm.message_error |= MESSAGE_ERROR_NMEA_CHECKSUM;
-		}
-
-		if (aivdm.count == 1)
-		{
-			tag.error = aivdm.message_error;
-
-			msg.clear();
-			if (stamp || t == 0)
-				msg.Stamp();
-			else
-				msg.setRxTimeMicros(t);
-			msg.setTOA(toa);
-			msg.setOrigin(aivdm.channel, thisstation == -1 ? station : thisstation, own_mmsi);
-			msg.setStartIdx(ssc);
-			msg.setEndIdx(ssc + sl);
-
-			addline(aivdm);
-
-			if (msg.validate())
-			{
-				if (regenerate)
-					msg.buildNMEA(tag);
-				else
-					msg.NMEA.push_back(std::move(aivdm.sentence));
-
-				Send(&msg, 1, tag);
-			}
-			else if (msg.getLength() > 0)
-
-				if (warnings)
-					Warning() << "NMEA: invalid message of type " << msg.type() << " and length " << msg.getLength() << " from station " << (thisstation == -1 ? station : thisstation) << ".";
-
-			return;
-		}
-
-		int result = search(aivdm);
-
+		// Multi-part: check sequence continuity
+		int result = search();
 		if (aivdm.number != result + 1 || result == -1)
 		{
 			clean(aivdm.channel, aivdm.talkerID, aivdm.groupId);
 			if (aivdm.number != 1)
-			{
 				return;
-			}
 		}
 
+		if (queue.size() >= 64)
+			queue.erase(queue.begin());
 		queue.push_back(aivdm);
+
 		if (aivdm.number != aivdm.count)
 			return;
 
-		// multiline messages are now complete and in the right order
-		// we create a message and add the payloads to it
-		msg.clear();
-		if (stamp || t == 0)
-			msg.Stamp();
-		else
-			msg.setRxTimeMicros(t);
-		msg.setTOA(toa);
-		msg.setOrigin(aivdm.channel, thisstation == -1 ? station : thisstation, own_mmsi);
+		// All parts collected — assemble and send
+		initMsg(aivdm.channel, src);
 
-		for (auto it = queue.begin(); it != queue.end(); it++)
+		for (auto &it : queue)
 		{
-			// Match by groupId if available, otherwise by channel+talkerID
-			bool match = (aivdm.groupId != 0 && it->groupId == aivdm.groupId) ||
-						 (aivdm.groupId == 0 && it->channel == aivdm.channel && it->talkerID == aivdm.talkerID);
-			if (match && it->count == aivdm.count && it->ID == aivdm.ID)
+			bool match = (aivdm.groupId != 0 && it.groupId == aivdm.groupId) ||
+						 (aivdm.groupId == 0 && it.channel == aivdm.channel && it.talkerID == aivdm.talkerID);
+			if (match && it.count == aivdm.count && it.ID == aivdm.ID)
 			{
-				tag.error |= it->message_error;
-
-				addline(*it);
-				if (!regenerate)
-					msg.NMEA.push_back(it->sentence);
+				tag.error |= it.message_error;
+				addline(it);
+				if (!cfg_regenerate)
+					msg.NMEA.push_back(it.sentence);
 			}
 		}
 
 		if (msg.validate())
 		{
-			if (regenerate)
+			if (cfg_regenerate)
 				msg.buildNMEA(tag, aivdm.ID);
-
 			Send(&msg, 1, tag);
 		}
-		else if (warnings)
-			Warning() << "NMEA: invalid message of type " << msg.type() << " and length " << msg.getLength();
+		else if (cfg_warnings)
+		{
+			Warning() << "NMEA: invalid message of type " << msg.type() << " and length " << msg.getLength() << " from station " << src << ".";
+		}
 
 		clean(aivdm.channel, aivdm.talkerID, aivdm.groupId);
 	}
@@ -204,6 +150,18 @@ namespace AIS
 	{
 		size_t v = word ^ mask;
 		return (v - SWAR_ONES) & ~v & SWAR_HIGHS;
+	}
+
+#define C(ch) has_byte(word, swar_mask(ch))
+
+#define SWAR_SKIP(buf, i, limit, condition)         \
+	while ((i) + (int)sizeof(size_t) <= (limit))    \
+	{                                               \
+		size_t word;                                \
+		memcpy(&word, (buf) + (i), sizeof(size_t)); \
+		if (condition)                              \
+			break;                                  \
+		(i) += sizeof(size_t);                      \
 	}
 
 	void NMEA::split(const std::string &s, size_t offset /*= 0*/)
@@ -258,8 +216,13 @@ namespace AIS
 		for (; p < end && splitCount < 16; p++)
 		{
 			char c = *p;
-			if (c == '*') { past_star = true; continue; }
-			if (!past_star) cs ^= c;
+			if (c == '*')
+			{
+				past_star = true;
+				continue;
+			}
+			if (!past_star)
+				cs ^= c;
 			if (c == ',')
 				splitDelim[++splitCount] = (int)(p - s.data());
 		}
@@ -275,29 +238,23 @@ namespace AIS
 		for (int j = 0, len = partLen(i); j < len; j++)
 		{
 			char c = partAt(i, j);
-			if (j == 0 && c == '-') { neg = true; continue; }
-			if (c < '0' || c > '9') break;
+			if (j == 0 && c == '-')
+			{
+				neg = true;
+				continue;
+			}
+			if (c < '0' || c > '9')
+				break;
 			val = val * 10 + (c - '0');
 		}
 		return neg ? -val : val;
 	}
 
-	std::string NMEA::trimPart(int i) const
-	{
-		std::string r;
-		for (int j = 0, len = partLen(i); j < len; j++)
-		{
-			char c = partAt(i, j);
-			if (c != ' ') r += c;
-		}
-		return r;
-	}
-
 	// stackoverflow variant (need to find the reference)
-	float NMEA::GpsToDecimal(const char *nmeaPos, char quadrant, bool &error)
+	float NMEA::GpsToDecimal(const char *nmeaPos, int nmeaLen, char quadrant, bool &error)
 	{
 		float v = 0;
-		if (nmeaPos && strlen(nmeaPos) > 5)
+		if (nmeaPos && nmeaLen > 5)
 		{
 			char integerPart[3 + 1];
 			int digitCount = (nmeaPos[4] == '.' ? 2 : 3);
@@ -326,74 +283,55 @@ namespace AIS
 		return v;
 	}
 
-	bool NMEA::processGGA(const std::string &s, TAG &tag, int64_t t, std::string &error_msg)
+	bool NMEA::processGGA(const std::string &s, TAG &tag)
 	{
-
-		if (!includeGPS)
+		if (!cfg_GPS)
 			return true;
-
-		bool error = false;
 
 		split(s);
 
 		if (splitCount != 15)
 		{
-			error_msg = "NMEA: GPGGA does not have 15 parts but " + std::to_string(splitCount);
+			if (cfg_warnings)
+				Warning() << "GGA: expected 15 fields, got " << splitCount;
 			return false;
 		}
 
 		int checksum = partLen(14) > 2 ? (fromHEX(partAt(14, partLen(14) - 2)) << 4) | fromHEX(partAt(14, partLen(14) - 1)) : -1;
-
-		if (checksum != NMEAchecksum(line))
+		if (checksum != splitChecksum)
 		{
-			if (crc_check)
-			{
-
-				error_msg = "NMEA: incorrect checksum.";
+			if (cfg_warnings)
+				Warning() << "GGA: checksum mismatch";
+			if (cfg_crc_check)
 				return false;
-			}
 		}
 
-		// no proper fix
 		int fix = partInt(6);
 		if (fix != 1 && fix != 2)
-		{
-			error_msg = "NMEA: no fix in GPGGA NMEA:" + partStr(6);
 			return false;
-		}
-
-		std::string lat_coord = trimPart(2);
-		std::string lat_quad = trimPart(3);
-		std::string lon_coord = trimPart(4);
-		std::string lon_quad = trimPart(5);
-
-		if (lat_quad.empty() || lon_quad.empty())
-		{
+		if (partEmpty(3) || partEmpty(5))
 			return false;
-		}
 
-		GPS gps(GpsToDecimal(lat_coord.c_str(), lat_quad[0], error),
-				GpsToDecimal(lon_coord.c_str(), lon_quad[0], error),
+		bool error = false;
+		GPS gps(GpsToDecimal(partPtr(2), partLen(2), partAt(3, 0), error),
+				GpsToDecimal(partPtr(4), partLen(4), partAt(5, 0), error),
 				s, empty);
 
 		if (error)
 		{
-			error_msg = "NMEA: error in GPGGA coordinates.";
+			if (cfg_warnings)
+				Warning() << "GGA: invalid coordinates";
 			return false;
 		}
 
 		outGPS.Send(&gps, 1, tag);
-
 		return true;
 	}
 
-	bool NMEA::processRMC(const std::string &s, TAG &tag, int64_t t, std::string &error_msg)
+	bool NMEA::processRMC(const std::string &s, TAG &tag)
 	{
-
-		if (!includeGPS)
+		if (!cfg_GPS)
 			return true;
-
-		bool error = false;
 
 		split(s);
 
@@ -402,828 +340,918 @@ namespace AIS
 
 		int last = splitCount - 1;
 		int checksum = partLen(last) > 2 ? (fromHEX(partAt(last, partLen(last) - 2)) << 4) | fromHEX(partAt(last, partLen(last) - 1)) : -1;
-
-		if (checksum != NMEAchecksum(line))
+		if (checksum != splitChecksum)
 		{
-			if (crc_check)
-			{
-				error_msg = "incorrect checksum";
+			if (cfg_warnings)
+				Warning() << "RMC: checksum mismatch";
+			if (cfg_crc_check)
 				return false;
-			}
 		}
 
-		std::string lat_quad = trimPart(4); // N/S
-		std::string lon_quad = trimPart(6); // E/W
-
-		if (lat_quad.empty() || lon_quad.empty())
-		{
-			error_msg = "NMEA: no coordinates in RMC";
+		if (partEmpty(4) || partEmpty(6))
 			return false;
-		}
 
-		GPS gps(GpsToDecimal(trimPart(3).c_str(), lat_quad[0], error), // lat
-				GpsToDecimal(trimPart(5).c_str(), lon_quad[0], error), // lon
+		bool error = false;
+		GPS gps(GpsToDecimal(partPtr(3), partLen(3), partAt(4, 0), error),
+				GpsToDecimal(partPtr(5), partLen(5), partAt(6, 0), error),
 				s, empty);
 
 		if (error)
 		{
-			error_msg = "NMEA: error in RMC coordinates.";
+			if (cfg_warnings)
+				Warning() << "RMC: invalid coordinates";
 			return false;
 		}
 
 		outGPS.Send(&gps, 1, tag);
-
 		return true;
 	}
 
-	bool NMEA::processGLL(const std::string &s, TAG &tag, int64_t t, std::string &error_msg)
+	bool NMEA::processGLL(const std::string &s, TAG &tag)
 	{
-
-		if (!includeGPS)
+		if (!cfg_GPS)
 			return true;
 
-		bool error = false;
 		split(s);
 
 		if (splitCount != 8)
 		{
-			error_msg = "NMEA: GLL does not have 8 parts but " + std::to_string(splitCount);
+			if (cfg_warnings)
+				Warning() << "GLL: expected 8 fields, got " << splitCount;
 			return false;
 		}
 
 		int checksum = partLen(7) > 2 ? (fromHEX(partAt(7, partLen(7) - 2)) << 4) | fromHEX(partAt(7, partLen(7) - 1)) : -1;
-
-		if (checksum != NMEAchecksum(line))
+		if (checksum != splitChecksum)
 		{
-			if (warnings && !crc_check)
-				Warning() << "NMEA: incorrect checksum [" << line << "].";
-
-			if (crc_check)
-			{
-				error_msg = "NMEA: incorrect checksum";
+			if (cfg_warnings)
+				Warning() << "GLL: checksum mismatch";
+			if (cfg_crc_check)
 				return false;
-			}
 		}
 
 		if (partEmpty(2) || partEmpty(4))
-		{
 			return false;
-		}
 
-		float lat = GpsToDecimal(partPtr(1), partAt(2, 0), error);
-		float lon = GpsToDecimal(partPtr(3), partAt(4, 0), error);
+		bool error = false;
+		float lat = GpsToDecimal(partPtr(1), partLen(1), partAt(2, 0), error);
+		float lon = GpsToDecimal(partPtr(3), partLen(3), partAt(4, 0), error);
 
 		if (error)
 		{
-			error_msg = "NMEA: error in GLL coordinates.";
+			if (cfg_warnings)
+				Warning() << "GLL: invalid coordinates";
 			return false;
 		}
 
 		GPS gps(lat, lon, s, empty);
 		outGPS.Send(&gps, 1, tag);
-
 		return true;
 	}
 
-	bool NMEA::processAIS(const std::string &str, TAG &tag, int64_t t, uint64_t ssc, uint16_t sl, int thisstation, int groupId, std::string &error_msg, int64_t toa)
+	bool NMEA::processAIS(const std::string &str, TAG &tag)
 	{
-		// Fast path: most NMEA lines start with $ or !
-		size_t pos = (!str.empty() && (str[0] == '$' || str[0] == '!')) ? 0 : str.find_first_of("$!");
-		if (pos == std::string::npos)
-		{
-			error_msg = "NMEA: no $ or ! in AIS sentence";
+		if (str.size() < 18 || (str[0] != '$' && str[0] != '!'))
 			return false;
-		}
 
-		size_t len = str.size() - pos;
-		bool isNMEA = len > 10 && (str[pos + 3] == 'V' && str[pos + 4] == 'D' && (str[pos + 5] == 'M' || str[pos + 5] == 'O'));
-		if (!isNMEA)
-		{
-			return true; // no NMEA -> ignore
-		}
+		const char *p = str.data();
+		int len = (int)str.size();
 
-		split(str, pos);
-		aivdm.reset();
+		if (memcmp(p + 3, "VDM", 3) != 0 && memcmp(p + 3, "VDO", 3) != 0)
+			return true;
 
-		if (splitCount != 7 || partLen(0) != 6 || partLen(1) != 1 || partLen(2) != 1 || partLen(3) > 1 || partLen(4) > 1 || partLen(6) != 4)
-		{
-			error_msg = "NMEA: AIS sentence does not have 7 parts or has invalid part sizes";
-			return false;
-		}
-		if (partAt(0, 0) != '$' && partAt(0, 0) != '!')
-		{
-			error_msg = "NMEA: AIS sentence does not start with $ or !";
-			return false;
-		}
-
-		char t1 = partAt(0, 1), t2 = partAt(0, 2);
+		char t1 = p[1], t2 = p[2];
 		if (!(t1 >= 'A' && t1 <= 'Z') || (!(t2 >= 'A' && t2 <= 'Z') && !(t2 >= '0' && t2 <= '9')))
 		{
-			error_msg = "NMEA: AIS sentence does not have valid talker ID";
+			if (cfg_warnings)
+				Warning() << "AIS: invalid talker ID in [" << str << "]";
+			return false;
+		}
+		if (p[6] != ',' || p[8] != ',' || p[10] != ',' || p[7] < '1' || p[7] > '9' || p[9] < '1' || p[9] > '9')
+		{
+			if (cfg_warnings)
+				Warning() << "AIS: malformed header in [" << str << "]";
 			return false;
 		}
 
-		if (partAt(0, 3) != 'V' || partAt(0, 4) != 'D' || (partAt(0, 5) != 'M' && partAt(0, 5) != 'O'))
+		// Parse from back: ,F*HH
+		const char *end = p + len;
+		if (!isHEX(end[-1]) || !isHEX(end[-2]) || end[-3] != '*' || end[-5] != ',')
 		{
-			error_msg = "NMEA: AIS sentence does not have valid VDM or VDO";
+			if (cfg_warnings)
+				Warning() << "AIS: malformed tail in [" << str << "]";
+			return false;
+		}
+		int checksum = (fromHEX(end[-2]) << 4) | fromHEX(end[-1]);
+		char fillbits_ch = end[-4];
+		if (fillbits_ch < '0' || fillbits_ch > '5')
+		{
+			if (cfg_warnings)
+				Warning() << "AIS: invalid fillbits in [" << str << "]";
 			return false;
 		}
 
-		aivdm.talkerID = ((partAt(0, 1) << 8) | partAt(0, 2));
-		aivdm.count = partAt(1, 0) - '0';
-		aivdm.number = partAt(2, 0) - '0';
-		aivdm.ID = partLen(3) > 0 ? partAt(3, 0) - '0' : 0;
-		aivdm.channel = partLen(4) > 0 ? partAt(4, 0) : '?';
-
-		aivdm.data_offset = splitDelim[5] + 1;
-		aivdm.data_len = partLen(5);
-		aivdm.fillbits = partAt(6, 0) - '0';
-
-		if (!isHEX(partAt(6, 2)) || !isHEX(partAt(6, 3)))
+		// Fields 3 (ID) and 4 (channel): 0 or 1 char each
+		const char *q = p + 11;
+		char id_ch = 0;
+		if (*q != ',')
+			id_ch = *q++;
+		if (*q != ',')
 		{
-			error_msg = "NMEA: AIS sentence does not have valid checksum";
+			if (cfg_warnings)
+				Warning() << "AIS: invalid ID field in [" << str << "]";
 			return false;
 		}
-		aivdm.checksum = (fromHEX(partAt(6, 2)) << 4) | fromHEX(partAt(6, 3));
+		q++;
 
-		// One assignment, reuses sentence buffer if large enough
-		aivdm.sentence.assign(str, pos, std::string::npos);
-		aivdm.data_offset -= pos;
-		aivdm.groupId = groupId;
-
-		submitAIS(tag, t, ssc, sl, thisstation, toa);
-
-		return true;
-	}
-
-	void NMEA::processJSONsentence(const std::string &s, TAG &tag, int64_t t)
-	{
-
-		if (s[0] == '{')
+		char channel_ch = '?';
+		if (*q != ',')
+			channel_ch = *q++;
+		if (*q != ',')
 		{
-			try
-			{
-				// JSON::Parser parser(&AIS::KeyMap, JSON_DICT_FULL);
-				// parser.setSkipUnknown(true);
-				parser.parse_into(jsonDoc, s);
-
-				std::string cls = "";
-				std::string dev = "";
-				std::string suuid = "";
-				std::string message = "";
-				int thisstation = -1;
-				uint64_t ssc = 0;
-				uint16_t sl = 0;
-				int64_t toa = 0;
-
-				t = 0;
-
-				// phase 1, get the meta data in place
-				for (const auto &p : jsonDoc.getMembers())
-				{
-					switch (p.Key())
-					{
-					case AIS::KEY_CLASS:
-						cls = p.Get().getString();
-						break;
-					case AIS::KEY_UUID:
-						suuid = p.Get().getString();
-						break;
-					case AIS::KEY_DEVICE:
-						dev = p.Get().getString();
-						break;
-					case AIS::KEY_SIGNAL_POWER:
-					case AIS::KEY_DBM:
-						tag.level = p.Get().getFloat(LEVEL_UNDEFINED);
-						break;
-					case AIS::KEY_PPM:
-						tag.ppm = p.Get().getFloat(PPM_UNDEFINED);
-						break;
-					case AIS::KEY_RXUXTIME:
-					{
-						double ts = p.Get().getFloat();
-						t = (int64_t)std::llround(ts * 1000000.0);
-					}
-					break;
-					case AIS::KEY_TOA:
-					{
-						double ts = p.Get().getFloat();
-						toa = (int64_t)std::llround(ts * 1000000.0);
-					}
-					break;
-					case AIS::KEY_STATION_ID:
-						thisstation = p.Get().getInt();
-						break;
-					case AIS::KEY_VERSION:
-						tag.version = p.Get().getInt();
-						break;
-					case AIS::KEY_HARDWARE:
-						tag.hardware = p.Get().getString();
-						break;
-					case AIS::KEY_DRIVER:
-						tag.driver = (Type)p.Get().getInt();
-						break;
-					case AIS::KEY_SAMPLE_START_COUNT:
-						ssc = p.Get().getInt();
-						break;
-					case AIS::KEY_SAMPLE_LENGTH:
-						sl = p.Get().getInt();
-						break;
-					case AIS::KEY_IPV4:
-						tag.ipv4 = p.Get().getInt();
-						break;
-					case AIS::KEY_MESSAGE:
-						message = p.Get().getString();
-						break;
-					}
-				}
-
-				if (cls == "AIS" && (dev == "AIS-catcher" || dev == "dAISy-catcher") && (uuid.empty() || suuid == uuid))
-				{
-					if (dev == "dAISy-catcher" && toa != 0 && !stamp)
-						t = toa;
-
-					for (const auto &p : jsonDoc.getMembers())
-					{
-						if (p.Key() == AIS::KEY_NMEA)
-						{
-							if (p.Get().isArray())
-							{
-								for (const auto &v : p.Get().getArray())
-								{
-									std::string error;
-									const std::string &line = v.getString();
-
-									if (!processAIS(line, tag, t, ssc, sl, thisstation, 0, error, toa))
-									{
-										Warning() << "NMEA [" << (tag.ipv4 ? (Util::Convert::IPV4toString(tag.ipv4) + " - ") : "") << thisstation << "] " << error << " (" << line << ")";
-									}
-								}
-							}
-						}
-					}
-				}
-
-				if ((dev == "AIS-catcher" || dev == "dAISy-catcher") && !message.empty())
-				{
-					if (cls == "error")
-					{
-
-						Error() << "[" << Util::Parse::DeviceTypeString(tag.driver) << "]: " << message;
-					}
-					else if (cls == "warning")
-					{
-						Warning() << "[" << Util::Parse::DeviceTypeString(tag.driver) << "]: " << message;
-					}
-					else
-					{
-						Info() << "[" << Util::Parse::DeviceTypeString(tag.driver) << "]: " << message;
-					}
-				}
-
-				if (cls == "TPV" && includeGPS)
-				{
-					float lat = 0, lon = 0;
-
-					for (const auto &p : jsonDoc.getMembers())
-					{
-						if (p.Key() == AIS::KEY_LAT)
-						{
-							if (p.Get().isFloat())
-							{
-								lat = p.Get().getFloat();
-							}
-							else if (p.Get().isInt())
-							{
-								lat = (float)p.Get().getInt();
-							}
-						}
-						else if (p.Key() == AIS::KEY_LON)
-						{
-							if (p.Get().isFloat())
-							{
-								lon = p.Get().getFloat();
-							}
-							else if (p.Get().isInt())
-							{
-								lon = (float)p.Get().getInt();
-							}
-						}
-					}
-
-					if (lat != 0 || lon != 0)
-					{
-						GPS gps(lat, lon, empty, s);
-						outGPS.Send(&gps, 1, tag);
-					}
-				}
-			}
-			catch (std::exception const &e)
-			{
-				Error() << "NMEA model: " << e.what();
-			}
+			if (cfg_warnings)
+				Warning() << "AIS: invalid channel field in [" << str << "]";
+			return false;
 		}
-	}
+		q++;
 
-	bool NMEA::processBinaryPacket(const std::string &packet, TAG &tag, std::string &error_msg)
-	{
-		try
+		const char *payload_end = end - 5;
+		if (q > payload_end)
 		{
-			size_t idx = 0;
-			auto getByte = [&]() -> uint8_t
+			if (cfg_warnings)
+				Warning() << "AIS: empty payload in [" << str << "]";
+			return false;
+		}
+
+		int cs = 0;
+		for (const char *r = p + 1; r < end - 3; r++)
+			cs ^= *r;
+
+		int src = (mctx.station == -1) ? station : mctx.station;
+		int fillbits = fillbits_ch - '0';
+		uint32_t message_error = 0;
+
+		if (checksum != cs)
+		{
+			if (cfg_warnings)
+				Warning() << "NMEA: incorrect checksum from station " << src << ".";
+			if (cfg_crc_check)
+				return true;
+			message_error = MESSAGE_ERROR_NMEA_CHECKSUM;
+		}
+
+		// Single-part: decode and send directly, no aivdm construction
+		if (p[7] == '1')
+		{
+			tag.error = message_error;
+
+			initMsg(channel_ch, src);
+			msg.setStartIdx(mctx.ssc);
+			msg.setEndIdx(mctx.ssc + mctx.sl);
+			msg.appendPayload(q, (int)(payload_end - q));
+			msg.reduceLength(fillbits);
+
+			if (msg.validate())
 			{
-				if (idx >= packet.length())
-					throw std::runtime_error("packet too short");
-
-				uint8_t byte = packet[idx++];
-
-				if (byte == 0xad)
-				{
-					if (idx >= packet.length())
-						throw std::runtime_error("packet too short");
-
-					uint8_t next = packet[idx++];
-
-					if (next == 0xae)
-						return '\n';
-					if (next == 0xaf)
-						return '\r';
-					if (next == 0xad)
-						return 0xad;
-					throw std::runtime_error("invalid escape sequence");
-				}
-				return byte;
-			};
-
-			if (getByte() != 0xac)
-				throw std::runtime_error("invalid magic byte");
-			if (getByte() != 0x00)
-				throw std::runtime_error("unsupported version");
-
-			uint8_t flags = getByte();
-
-			long long timestamp = 0;
-
-			for (int i = 0; i < 8; i++)
-				timestamp = (timestamp << 8) | getByte();
-
-			if (flags & 0x01)
-			{
-				tag.level = (int16_t)((getByte() << 8) | getByte()) / 10.0f;
-				tag.ppm = (int8_t)getByte() / 10.0f;
+				if (cfg_regenerate)
+					msg.buildNMEA(tag);
+				else
+					msg.NMEA.push_back(str);
+				Send(&msg, 1, tag);
 			}
-
-			char channel = getByte();
-			int length_bits = (getByte() << 8) | getByte();
-
-			if (length_bits < 0 || length_bits > MAX_AIS_LENGTH)
+			else if (msg.getLength() > 0 && cfg_warnings)
 			{
-				throw std::runtime_error("invalid message length: " + std::to_string(length_bits));
+				Warning() << "NMEA: invalid message of type " << msg.type() << " and length " << msg.getLength() << " from station " << src << ".";
 			}
-
-			msg.clear();
-			msg.setRxTimeUnix(timestamp);
-			msg.setOrigin(channel, station, own_mmsi);
-			msg.setStartIdx(0);
-			msg.setEndIdx(0);
-
-			for (int i = 0; i < (length_bits + 7) / 8; i++)
-				msg.setUint(i * 8, 8, getByte());
-
-			msg.setLength(length_bits);
-
-			if (flags & 0x02)
-			{
-				uint16_t calc_crc = Util::Helper::CRC16((const uint8_t *)packet.data(), idx);
-				uint16_t recv_crc = (getByte() << 8) | getByte();
-				if (recv_crc != calc_crc)
-				{
-					if (crc_check)
-						throw std::runtime_error("CRC mismatch");
-					if (warnings)
-						Warning() << "NMEA: binary packet CRC mismatch";
-				}
-			}
-
-			if (!msg.validate())
-			{
-				error_msg = "message validation failed";
-				return false;
-			}
-			msg.buildNMEA(tag);
-			Send(&msg, 1, tag);
 			return true;
 		}
-		catch (const std::exception &e)
+
+		// Multi-part: construct aivdm and hand off to fragment assembler
+		aivdm.reset();
+		aivdm.talkerID = (t1 << 8) | t2;
+		aivdm.count = p[7] - '0';
+		aivdm.number = p[9] - '0';
+		aivdm.ID = id_ch ? (id_ch - '0') : 0;
+		aivdm.channel = channel_ch;
+		aivdm.data_offset = (int)(q - str.data());
+		aivdm.data_len = (int)(payload_end - q);
+		aivdm.fillbits = fillbits;
+		aivdm.checksum = checksum;
+		aivdm.message_error = message_error;
+		aivdm.groupId = mctx.groupId;
+
+		splitChecksum = cs;
+		aivdm.sentence = str;
+
+		dispatchAIS(tag);
+		return true;
+	}
+
+	void NMEA::processJSONsentence(TAG &tag)
+	{
+		tag.clear();
+		mctx.reset();
+
+		if (line[0] != '{')
+			return;
+
+		try
 		{
-			error_msg = e.what();
-			return false;
+			parser.parse_into(jsonDoc, line);
+
+			enum
+			{
+				CLS_UNKNOWN,
+				CLS_AIS,
+				CLS_TPV,
+				CLS_ERROR,
+				CLS_WARNING
+			} cls = CLS_UNKNOWN;
+			enum
+			{
+				DEV_UNKNOWN,
+				DEV_AIS_CATCHER,
+				DEV_DAISY_CATCHER
+			} dev = DEV_UNKNOWN;
+			bool uuid_match = uuid.empty();
+			const std::string *message = nullptr;
+
+			for (const auto &p : jsonDoc.getMembers())
+			{
+				switch (p.Key())
+				{
+				case AIS::KEY_CLASS:
+				{
+					const auto &s = p.Get().getStringRef();
+					if (s == "AIS")
+						cls = CLS_AIS;
+					else if (s == "TPV")
+						cls = CLS_TPV;
+					else if (s == "error")
+						cls = CLS_ERROR;
+					else if (s == "warning")
+						cls = CLS_WARNING;
+					break;
+				}
+				case AIS::KEY_UUID:
+					if (!uuid.empty())
+						uuid_match = (p.Get().getStringRef() == uuid);
+					break;
+				case AIS::KEY_DEVICE:
+				{
+					const auto &s = p.Get().getStringRef();
+					if (s == "AIS-catcher")
+						dev = DEV_AIS_CATCHER;
+					else if (s == "dAISy-catcher")
+						dev = DEV_DAISY_CATCHER;
+					break;
+				}
+				case AIS::KEY_SIGNAL_POWER:
+				case AIS::KEY_DBM:
+					tag.level = p.Get().getFloat(LEVEL_UNDEFINED);
+					break;
+				case AIS::KEY_PPM:
+					tag.ppm = p.Get().getFloat(PPM_UNDEFINED);
+					break;
+				case AIS::KEY_RXUXTIME:
+					mctx.rxtime = (int64_t)std::llround(p.Get().getFloat() * 1000000.0);
+					break;
+				case AIS::KEY_TOA:
+					mctx.toa = (int64_t)std::llround(p.Get().getFloat() * 1000000.0);
+					break;
+				case AIS::KEY_STATION_ID:
+					mctx.station = p.Get().getInt();
+					break;
+				case AIS::KEY_VERSION:
+					tag.version = p.Get().getInt();
+					break;
+				case AIS::KEY_HARDWARE:
+					tag.hardware = p.Get().getString();
+					break;
+				case AIS::KEY_DRIVER:
+					tag.driver = (Type)p.Get().getInt();
+					break;
+				case AIS::KEY_SAMPLE_START_COUNT:
+					mctx.ssc = p.Get().getInt();
+					break;
+				case AIS::KEY_SAMPLE_LENGTH:
+					mctx.sl = p.Get().getInt();
+					break;
+				case AIS::KEY_IPV4:
+					tag.ipv4 = p.Get().getInt();
+					break;
+				case AIS::KEY_MESSAGE:
+					message = &p.Get().getStringRef();
+					break;
+				}
+			}
+
+			bool known_dev = (dev == DEV_AIS_CATCHER || dev == DEV_DAISY_CATCHER);
+
+			if (cls == CLS_AIS && known_dev && uuid_match)
+			{
+				if (dev == DEV_DAISY_CATCHER && mctx.toa != 0 && !cfg_stamp)
+					mctx.rxtime = mctx.toa;
+
+				mctx.groupId = 0;
+				queue.clear();
+				for (const auto &p : jsonDoc.getMembers())
+				{
+					if (p.Key() == AIS::KEY_NMEA && p.Get().isArray())
+					{
+						for (const auto &v : p.Get().getArray())
+							processAIS(v.getString(), tag);
+					}
+				}
+			}
+
+			if (known_dev && message && !message->empty())
+			{
+				auto driver = Util::Parse::DeviceTypeString(tag.driver);
+				if (cls == CLS_ERROR)
+					Error() << "[" << driver << "]: " << *message;
+				else if (cls == CLS_WARNING)
+					Warning() << "[" << driver << "]: " << *message;
+				else
+					Info() << "[" << driver << "]: " << *message;
+			}
+
+			if (cls == CLS_TPV && cfg_GPS)
+			{
+				float lat = 0, lon = 0;
+
+				for (const auto &p : jsonDoc.getMembers())
+				{
+					if (p.Key() == AIS::KEY_LAT)
+						lat = p.Get().isFloat() ? p.Get().getFloat() : (p.Get().isInt() ? (float)p.Get().getInt() : 0);
+					else if (p.Key() == AIS::KEY_LON)
+						lon = p.Get().isFloat() ? p.Get().getFloat() : (p.Get().isInt() ? (float)p.Get().getInt() : 0);
+				}
+
+				if (lat != 0 || lon != 0)
+				{
+					GPS gps(lat, lon, empty, line);
+					outGPS.Send(&gps, 1, tag);
+				}
+			}
+		}
+		catch (std::exception const &e)
+		{
+			if (cfg_warnings)
+				Warning() << "JSON: " << e.what();
 		}
 	}
 
-	bool NMEA::parseTagBlock(const std::string &s, std::string &nmea, int64_t &timestamp, int &thisstation, int &groupId, std::string &error_msg)
+	bool NMEA::processBinaryPacket(TAG &tag)
 	{
-		// Format: \s:source,c:timestamp,g:seq-total-id*checksum\!AIVDM,...
-		// Find the second backslash that ends the tag block
-		size_t tagEnd = s.find('\\', 1);
-		if (tagEnd == std::string::npos)
-		{
-			error_msg = "tag block: no closing backslash";
-			return false;
-		}
+		tag.clear();
 
-		std::string tagBlock = s.substr(1, tagEnd - 1); // Extract content between backslashes
-		nmea = s.substr(tagEnd + 1);					// NMEA sentence after tag block
+		size_t idx = 0;
+		size_t plen = line.length();
 
-		if (nmea.empty())
+		auto getByte = [&](uint8_t &out) -> bool
 		{
-			error_msg = "tag block: no NMEA sentence after tag block";
-			return false;
-		}
-
-		// Remove checksum from tag block if present
-		size_t checksumPos = tagBlock.find('*');
-		if (checksumPos != std::string::npos)
-		{
-			// Verify checksum - need at least 2 hex chars after '*'
-			int expectedChecksum = 0;
-			if (checksumPos + 2 < tagBlock.size())
+			if (idx >= plen)
+				return false;
+			uint8_t byte = line[idx++];
+			if (byte == 0xad)
 			{
-				expectedChecksum = (fromHEX(tagBlock[checksumPos + 1]) << 4) | fromHEX(tagBlock[checksumPos + 2]);
-			}
-			int actualChecksum = 0;
-			for (size_t i = 0; i < checksumPos; i++)
-				actualChecksum ^= tagBlock[i];
-
-			if (expectedChecksum != actualChecksum && crc_check)
-			{
-				error_msg = "tag block: checksum mismatch";
+				if (idx >= plen)
+					return false;
+				uint8_t next = line[idx++];
+				if (next == 0xae)
+				{
+					out = '\n';
+					return true;
+				}
+				if (next == 0xaf)
+				{
+					out = '\r';
+					return true;
+				}
+				if (next == 0xad)
+				{
+					out = 0xad;
+					return true;
+				}
 				return false;
 			}
-			tagBlock.resize(checksumPos);
+			out = byte;
+			return true;
+		};
+
+		uint8_t b;
+		if (!getByte(b) || b != 0xac || !getByte(b) || b != 0x00)
+		{
+			if (cfg_warnings)
+				Warning() << "binary: invalid header";
+			return false;
 		}
 
-		// Parse individual fields
-		std::stringstream ss(tagBlock);
-		std::string field;
-		while (std::getline(ss, field, ','))
+		uint8_t flags;
+		if (!getByte(flags))
 		{
-			if (field.size() < 2 || field[1] != ':')
-				continue;
+			if (cfg_warnings)
+				Warning() << "binary: packet too short";
+			return false;
+		}
 
-			char key = field[0];
-			std::string value = field.substr(2);
-
-			switch (key)
+		long long timestamp = 0;
+		for (int i = 0; i < 8; i++)
+		{
+			if (!getByte(b))
 			{
-			case 's': // Source - if starts with 's' followed by digits, extract station ID
-				if (!value.empty() && value[0] == 's')
+				if (cfg_warnings)
+					Warning() << "binary: packet too short";
+				return false;
+			}
+			timestamp = (timestamp << 8) | b;
+		}
+
+		if (flags & 0x01)
+		{
+			uint8_t h, l, p;
+			if (!getByte(h) || !getByte(l) || !getByte(p))
+			{
+				if (cfg_warnings)
+					Warning() << "binary: packet too short";
+				return false;
+			}
+			tag.level = (int16_t)((h << 8) | l) / 10.0f;
+			tag.ppm = (int8_t)p / 10.0f;
+		}
+
+		uint8_t ch, lh, ll;
+		if (!getByte(ch) || !getByte(lh) || !getByte(ll))
+		{
+			if (cfg_warnings)
+				Warning() << "binary: packet too short";
+			return false;
+		}
+		int length_bits = (lh << 8) | ll;
+
+		if (length_bits < 0 || length_bits > MAX_AIS_LENGTH)
+		{
+			if (cfg_warnings)
+				Warning() << "binary: invalid message length " << length_bits;
+			return false;
+		}
+
+		msg.clear();
+		msg.setRxTimeUnix(timestamp);
+		msg.setOrigin(ch, station, own_mmsi);
+		msg.setStartIdx(0);
+		msg.setEndIdx(0);
+
+		for (int i = 0; i < (length_bits + 7) / 8; i++)
+		{
+			if (!getByte(b))
+			{
+				if (cfg_warnings)
+					Warning() << "binary: packet too short";
+				return false;
+			}
+			msg.setUint(i * 8, 8, b);
+		}
+		msg.setLength(length_bits);
+
+		if (flags & 0x02)
+		{
+			uint16_t calc_crc = Util::Helper::CRC16((const uint8_t *)line.data(), idx);
+			uint8_t ch2, cl2;
+			if (!getByte(ch2) || !getByte(cl2))
+			{
+				if (cfg_warnings)
+					Warning() << "binary: packet too short for CRC";
+				return false;
+			}
+			uint16_t recv_crc = (ch2 << 8) | cl2;
+			if (recv_crc != calc_crc)
+			{
+				if (cfg_warnings)
+					Warning() << "binary: CRC mismatch";
+				if (cfg_crc_check)
+					return false;
+			}
+		}
+
+		if (!msg.validate())
+		{
+			if (cfg_warnings)
+				Warning() << "binary: message validation failed (type " << msg.type() << ", length " << msg.getLength() << ")";
+			return false;
+		}
+		msg.buildNMEA(tag);
+		Send(&msg, 1, tag);
+		return true;
+	}
+
+	bool NMEA::parseTagBlock(const std::string &s, std::string &nmea)
+	{
+		// Format: \s:source,c:timestamp,g:seq-total-id*checksum\!AIVDM,...
+		const char *data = s.data();
+		int len = (int)s.size();
+
+		int tagEnd = 1;
+		while (tagEnd < len && data[tagEnd] != '\\')
+			tagEnd++;
+		if (tagEnd >= len)
+		{
+			if (cfg_warnings)
+				Warning() << "tag block: no closing backslash";
+			return false;
+		}
+
+		nmea = s.substr(tagEnd + 1);
+		if (nmea.empty())
+		{
+			if (cfg_warnings)
+				Warning() << "tag block: no NMEA sentence after tag block";
+			return false;
+		}
+
+		const char *p = data + 1;
+		const char *pEnd = data + tagEnd;
+
+		// Find checksum '*' from the end
+		const char *star = pEnd;
+		while (star > p && star[-1] != '*')
+			star--;
+
+		const char *contentEnd = pEnd;
+		if (star > p)
+		{
+			star--;
+			contentEnd = star;
+
+			if (star + 3 <= pEnd)
+			{
+				int expected = (fromHEX(star[1]) << 4) | fromHEX(star[2]);
+				int actual = 0;
+				for (const char *q = p; q < star; q++)
+					actual ^= *q;
+				if (expected != actual)
 				{
-					try
-					{
-						thisstation = std::stoi(value.substr(1));
-					}
-					catch (...)
-					{
-					}
+					if (cfg_warnings)
+						Warning() << "tag block: checksum mismatch";
+					if (cfg_crc_check)
+						return false;
 				}
-				break;
-			case 'c': // Unix timestamp
-				try
+			}
+		}
+
+		// Parse comma-delimited fields via pointer walk
+		const char *field = p;
+		while (field < contentEnd)
+		{
+			const char *fEnd = field;
+			while (fEnd < contentEnd && *fEnd != ',')
+				fEnd++;
+
+			int fLen = (int)(fEnd - field);
+			if (fLen >= 3 && field[1] == ':')
+			{
+				const char *val = field + 2;
+				int vLen = fLen - 2;
+
+				switch (field[0])
 				{
-					if (value.find('.') != std::string::npos)
+				case 's':
+					if (vLen > 1 && val[0] == 's')
 					{
-						double ts = std::stod(value);
-						timestamp = (int64_t)std::llround(ts * 1000000.0);
+						int n = 0;
+						bool valid = true;
+						for (int i = 1; i < vLen; i++)
+						{
+							if (val[i] >= '0' && val[i] <= '9')
+								n = n * 10 + (val[i] - '0');
+							else
+							{
+								valid = false;
+								break;
+							}
+						}
+						if (valid)
+							mctx.station = n;
+					}
+					break;
+				case 'c':
+				{
+					bool hasDot = false;
+					for (int i = 0; i < vLen; i++)
+					{
+						if (val[i] == '.')
+						{
+							hasDot = true;
+							break;
+						}
+					}
+
+					if (hasDot)
+					{
+						char *end;
+						double ts = strtod(val, &end);
+						if (end > val)
+							mctx.rxtime = (int64_t)std::llround(ts * 1000000.0);
 					}
 					else
 					{
-						int64_t raw = std::stoll(value);
-						timestamp = (raw > 100000000000LL || raw < -100000000000LL) ? raw : (raw * 1000000);
+						int64_t raw = 0;
+						bool neg = false;
+						int i = 0;
+						if (vLen > 0 && val[0] == '-')
+						{
+							neg = true;
+							i = 1;
+						}
+						bool valid = (i < vLen);
+						for (; i < vLen; i++)
+						{
+							if (val[i] >= '0' && val[i] <= '9')
+								raw = raw * 10 + (val[i] - '0');
+							else
+							{
+								valid = false;
+								break;
+							}
+						}
+						if (valid)
+						{
+							if (neg)
+								raw = -raw;
+							mctx.rxtime = (raw > 100000000000LL || raw < -100000000000LL) ? raw : (raw * 1000000);
+						}
 					}
+					break;
 				}
-				catch (...)
+				case 'g':
 				{
+					int dash1 = -1, dash2 = -1;
+					for (int i = 0; i < vLen; i++)
+					{
+						if (val[i] == '-')
+						{
+							if (dash1 < 0)
+								dash1 = i;
+							else
+							{
+								dash2 = i;
+								break;
+							}
+						}
+					}
+					if (dash2 >= 0 && dash2 + 1 < vLen)
+					{
+						int n = 0;
+						bool valid = true;
+						for (int i = dash2 + 1; i < vLen; i++)
+						{
+							if (val[i] >= '0' && val[i] <= '9')
+								n = n * 10 + (val[i] - '0');
+							else
+							{
+								valid = false;
+								break;
+							}
+						}
+						if (valid)
+							mctx.groupId = n;
+					}
+					break;
 				}
-				break;
-			case 'g': // Group: seq-total-groupId (e.g., "1-2-1234")
-			{
-				size_t dash1 = value.find('-');
-				size_t dash2 = value.find('-', dash1 + 1);
-				if (dash1 != std::string::npos && dash2 != std::string::npos)
-				{
-					try
-					{
-						groupId = std::stoi(value.substr(dash2 + 1));
-					}
-					catch (...)
-					{
-					}
 				}
 			}
-			break;
-			}
+			field = fEnd + 1;
 		}
 
 		return true;
 	}
 
-	bool NMEA::isCompleteNMEA(const std::string &s, size_t offset, bool newline)
-	{
-		size_t len = s.size() - offset;
-		if (len < 7)
-			return false;
-
-		// Check for VDM/VDO with valid checksum pattern
-		bool isVDx = len > 10 && (s[offset + 3] == 'V' && s[offset + 4] == 'D' && (s[offset + 5] == 'M' || s[offset + 5] == 'O'));
-		if (isVDx)
-		{
-			size_t sz = s.size();
-			bool hasChecksum = isHEX(s[sz - 1]) && isHEX(s[sz - 2]) && s[sz - 3] == '*' &&
-							   ((isdigit(s[sz - 4]) && s[sz - 5] == ',') || (s[sz - 4] == ','));
-			if (hasChecksum)
-				return true;
-		}
-
-		// For other NMEA types or incomplete VDM/VDO, require newline
-		return newline;
-	}
-
-	bool NMEA::processNMEAline(const std::string &s, TAG &tag, int64_t t, int thisstation, int groupId, std::string &error_msg)
+	bool NMEA::processNMEAline(const std::string &s, TAG &tag)
 	{
 		if (s.size() <= 5)
 			return true;
 
-		if (s[3] == 'V' && s[4] == 'D' && s[5] == 'M')
-			return processAIS(s, tag, t, 0, 0, thisstation, groupId, error_msg);
-		if (s[3] == 'V' && s[4] == 'D' && s[5] == 'O' && VDO)
-			return processAIS(s, tag, t, 0, 0, thisstation, groupId, error_msg);
-		if (s[3] == 'G' && s[4] == 'G' && s[5] == 'A')
-			return processGGA(s, tag, t, error_msg);
-		if (s[3] == 'R' && s[4] == 'M' && s[5] == 'C')
-			return processRMC(s, tag, t, error_msg);
-		if (s[3] == 'G' && s[4] == 'L' && s[5] == 'L')
-			return processGLL(s, tag, t, error_msg);
+		const char *id = s.data() + 3;
 
-		return true; // Unknown type, ignore
+		if (memcmp(id, "VDM", 3) == 0)
+			return processAIS(s, tag);
+		if (memcmp(id, "VDO", 3) == 0 && cfg_VDO)
+			return processAIS(s, tag);
+		if (memcmp(id, "GGA", 3) == 0)
+			return processGGA(s, tag);
+		if (memcmp(id, "RMC", 3) == 0)
+			return processRMC(s, tag);
+		if (memcmp(id, "GLL", 3) == 0)
+			return processGLL(s, tag);
+
+		return true;
 	}
 
-	bool NMEA::processTagBlock(const std::string &s, TAG &tag, int64_t &t, std::string &error_msg)
+	bool NMEA::processTagBlock(const std::string &s, TAG &tag)
 	{
-		std::string nmea;
-		int thisstation = -1;
-		int groupId = 0;
+		tag.clear();
+		mctx.reset();
 
-		if (!parseTagBlock(s, nmea, t, thisstation, groupId, error_msg))
+		std::string nmea;
+
+		if (!parseTagBlock(s, nmea))
 			return false;
 
-		return processNMEAline(nmea, tag, t, thisstation, groupId, error_msg);
+		return processNMEAline(nmea, tag);
 	}
 
-	// continue collection of full NMEA line in `sentence` and store location of commas in 'locs'
+	void NMEA::findStart()
+	{
+		SWAR_SKIP(buf, pos, bufsize, C('$') || C('!') || C('{') || C('\\') || C((char)0xac))
+
+		for (; pos < bufsize; pos++)
+		{
+			char c = buf[pos];
+			if (c == '{')
+			{
+				state = ParseState::JSON;
+				line = c;
+				count = 1;
+			}
+			else if (c == '\\')
+			{
+				state = ParseState::TAG_BLOCK;
+				line = c;
+			}
+			else if (c == '$' || c == '!')
+			{
+				state = ParseState::NMEA;
+				line = c;
+			}
+			else if ((unsigned char)c == 0xac)
+			{
+				state = ParseState::BINARY;
+				line = c;
+			}
+			else
+			{
+				continue;
+			}
+			pos++;
+			return;
+		}
+	}
+
+	void NMEA::scanLine(TAG &tag)
+	{
+		int limit = std::min(bufsize, pos + (int)(1025 - line.size()));
+		int start = pos;
+
+		while (pos < limit)
+		{
+			char c = buf[pos];
+			if (c == '\r' || c == '\n' || c == '\t' || c == '\0')
+				break;
+			pos++;
+		}
+
+		if (pos > start)
+			line.append(buf + start, pos - start);
+
+		if (pos < bufsize && pos < limit)
+		{
+			pos++; // skip terminator
+
+			if (state == ParseState::NMEA)
+			{
+				tag.clear();
+				mctx.reset();
+				processNMEAline(line, tag);
+			}
+			else
+			{
+				processTagBlock(line, tag);
+			}
+			reset();
+			return;
+		}
+
+		if (line.size() > 1024)
+			reset();
+	}
+
+	void NMEA::scanJSON(TAG &tag)
+	{
+		int limit = std::min(bufsize, pos + (int)(1025 - line.size()));
+		int start = pos;
+
+		SWAR_SKIP(buf, pos, limit, C('{') || C('}') || C('\r') || C('\n') || C('\t') || C('\0'))
+
+		while (pos < limit)
+		{
+			char c = buf[pos++];
+
+			if (c == '{')
+			{
+				count++;
+			}
+			else if (c == '}')
+			{
+				--count;
+				if (!count)
+				{
+					line.append(buf + start, pos - start);
+					processJSONsentence(tag);
+					reset();
+					return;
+				}
+			}
+			else if (c == '\r' || c == '\n' || c == '\t' || c == '\0')
+			{
+				if (cfg_warnings)
+					Warning() << "NMEA: newline in uncompleted JSON input not allowed";
+
+				reset();
+				return;
+			}
+		}
+
+		if (line.size() + pos - start > 1024)
+		{
+			if (cfg_warnings)
+				Warning() << "NMEA: JSON sentence too long";
+
+			reset();
+			return;
+		}
+
+		if (pos > start)
+			line.append(buf + start, pos - start);
+	}
+
+	void NMEA::scanBinary(TAG &tag)
+	{
+		int limit = std::min(bufsize, pos + (int)(1025 - line.size()));
+		int start = pos;
+
+		SWAR_SKIP(buf, pos, limit, C('\n'))
+
+		while (pos < limit)
+		{
+			if (buf[pos] == '\n')
+				break;
+			pos++;
+		}
+
+		if (pos > start)
+			line.append(buf + start, pos - start);
+
+		if (pos < bufsize && pos < limit)
+		{
+			pos++; // skip \n
+			processBinaryPacket(tag);
+			reset();
+			return;
+		}
+
+		if (line.size() > 1024)
+			reset();
+	}
+
 	void NMEA::Receive(const RAW *data, int len, TAG &tag)
 	{
 		try
 		{
-			int64_t t = 0;
-
 			for (int j = 0; j < len; j++)
 			{
-				const char *buf = (const char *)data[j].data;
-				int size = data[j].size;
-				int i = 0;
+				buf = (const char *)data[j].data;
+				bufsize = data[j].size;
+				pos = 0;
 
-				// Compile-time SWAR masks for Receive scanning
-				constexpr size_t m_dollar = swar_mask('$'), m_bang = swar_mask('!');
-				constexpr size_t m_lbrace = swar_mask('{'), m_bslash = swar_mask('\\'), m_0xac = swar_mask((char)0xac);
-				constexpr size_t m_star = swar_mask('*'), m_cr = swar_mask('\r'), m_lf = swar_mask('\n');
-				constexpr size_t m_tab = swar_mask('\t'), m_nul = swar_mask('\0'), m_rbrace = swar_mask('}');
-
-				while (i < size)
+				while (pos < bufsize)
 				{
 					if (state == ParseState::IDLE)
 					{
-						// SWAR fast-forward: skip bytes that can't be start characters
-						// Start chars: $ (0x24), ! (0x21), { (0x7B), \ (0x5C), 0xAC
-						// In IDLE after a newline, most bytes are \r\n between messages — skip them fast
-						while (i + (int)sizeof(size_t) <= size)
-						{
-							size_t word;
-							memcpy(&word, buf + i, sizeof(size_t));
-							if (has_byte(word, m_dollar) || has_byte(word, m_bang) || has_byte(word, m_lbrace) || has_byte(word, m_bslash) || has_byte(word, m_0xac))
-								break;
-							// Update prev to last byte of this word
-							prev = buf[i + sizeof(size_t) - 1];
-							i += sizeof(size_t);
-						}
-						for (; i < size; i++)
-						{
-							char c = buf[i];
-							if (c == '{' && (prev == '\n' || prev == '\r' || prev == '}'))
-							{
-								state = ParseState::JSON;
-								line = c;
-								count = 1;
-								prev = c;
-								i++;
-								break;
-							}
-							else if (c == '\\' && (prev == '\n' || prev == '\r'))
-							{
-								state = ParseState::TAG_BLOCK;
-								line = c;
-								prev = c;
-								i++;
-								break;
-							}
-							else if (c == '$' || c == '!')
-							{
-								state = ParseState::NMEA;
-								line = c;
-								prev = c;
-								i++;
-								break;
-							}
-							else if ((unsigned char)c == 0xac)
-							{
-								state = ParseState::BINARY;
-								line = c;
-								prev = c;
-								i++;
-								break;
-							}
-							prev = c;
-						}
+						findStart();
 						continue;
 					}
-
-					char c = buf[i];
-					bool newline = (state == ParseState::BINARY) ? (c == '\n') : (c == '\r' || c == '\n' || c == '\t' || c == '\0');
-
-					// Bulk-append block of non-special characters
-					if (!newline && c != '{' && c != '}' && c != '*' && !hasStar)
+					switch (state)
 					{
-						int start = i;
-
-						if (state == ParseState::NMEA || state == ParseState::TAG_BLOCK)
-						{
-							// SWAR scan: find first *, \r, \n, \t, \0 in 8-byte chunks
-							// All target bytes are < 0x2A (*=0x2A), so check for any byte <= 0x2A
-							while (i + (int)sizeof(size_t) <= size)
-							{
-								size_t word;
-								memcpy(&word, buf + i, sizeof(size_t));
-								// Check for '*' (0x2A) or any control char (< 0x20)
-								if (has_byte(word, m_star) || has_byte(word, m_cr) || has_byte(word, m_lf) || has_byte(word, m_tab) || has_byte(word, m_nul))
-									break;
-								i += sizeof(size_t);
-							}
-							for (; i < size; i++)
-							{
-								char bc = buf[i];
-								if (bc == '*' || bc == '\r' || bc == '\n' || bc == '\t' || bc == '\0')
-									break;
-							}
-						}
-						else if (state == ParseState::JSON)
-						{
-							while (i + (int)sizeof(size_t) <= size)
-							{
-								size_t word;
-								memcpy(&word, buf + i, sizeof(size_t));
-								if (has_byte(word, m_lbrace) || has_byte(word, m_rbrace) || has_byte(word, m_cr) || has_byte(word, m_lf) || has_byte(word, m_tab) || has_byte(word, m_nul))
-									break;
-								i += sizeof(size_t);
-							}
-							for (; i < size; i++)
-							{
-								char bc = buf[i];
-								if (bc == '{' || bc == '}' || bc == '\r' || bc == '\n' || bc == '\t' || bc == '\0')
-									break;
-							}
-						}
-						else if (state == ParseState::BINARY)
-						{
-							while (i + (int)sizeof(size_t) <= size)
-							{
-								size_t word;
-								memcpy(&word, buf + i, sizeof(size_t));
-								if (has_byte(word, m_lf))
-									break;
-								i += sizeof(size_t);
-							}
-							for (; i < size; i++)
-							{
-								if (buf[i] == '\n')
-									break;
-							}
-						}
-
-						if (i > start)
-						{
-							line.append(buf + start, i - start);
-							prev = buf[i - 1];
-						}
-						continue;
+					case ParseState::NMEA:
+					case ParseState::TAG_BLOCK:
+						scanLine(tag);
+						break;
+					case ParseState::JSON:
+						scanJSON(tag);
+						break;
+					case ParseState::BINARY:
+						scanBinary(tag);
+						break;
+					default:
+						break;
 					}
-
-					// Process single control/boundary character
-					i++;
-
-					if (!newline)
-					{
-						line += c;
-						if (c == '*') hasStar = true;
-					}
-					prev = c;
-
-					if (state == ParseState::JSON)
-					{
-						if (c == '{')
-							count++;
-						else if (c == '}')
-						{
-							--count;
-							if (!count)
-							{
-								t = 0;
-								tag.clear();
-								processJSONsentence(line, tag, t);
-								reset(c);
-							}
-						}
-						else if (newline)
-						{
-							if (warnings)
-								Warning() << "NMEA: newline in uncompleted JSON input not allowed";
-							reset(c);
-						}
-					}
-					else if (state == ParseState::NMEA)
-					{
-						if ((hasStar || newline) && isCompleteNMEA(line, 0, newline))
-						{
-							std::string error = "unspecified error";
-							tag.clear();
-							t = 0;
-
-							if (!processNMEAline(line, tag, t, -1, 0, error))
-							{
-								if (warnings)
-								{
-									Warning() << "NMEA: error processing NMEA line " << line;
-									Warning() << "NMEA [" << error << " (" << line << ")";
-								}
-							}
-							reset(c);
-						}
-					}
-					else if (state == ParseState::BINARY)
-					{
-						if (newline)
-						{
-							std::string error;
-							tag.clear();
-							if (!processBinaryPacket(line, tag, error))
-							{
-								if (warnings)
-								{
-									std::stringstream ss;
-									ss << "NMEA: error processing binary packet: " << error
-									   << " (length: " << line.length() << " bytes)";
-									Warning() << ss.str();
-								}
-							}
-							reset(c);
-						}
-					}
-					else if (state == ParseState::TAG_BLOCK)
-					{
-						size_t tagEnd = line.find('\\', 1);
-						size_t offset = (tagEnd != std::string::npos) ? (tagEnd + 1) : line.size();
-						if ((hasStar || newline) && isCompleteNMEA(line, offset, newline))
-						{
-							std::string error;
-							tag.clear();
-							t = 0;
-
-							if (!processTagBlock(line, tag, t, error))
-							{
-								if (warnings)
-									Warning() << "NMEA: " << error;
-							}
-							reset(c);
-						}
-					}
-
-					if (line.size() > 1024)
-						reset(c);
 				}
 			}
 		}
 		catch (std::exception &e)
 		{
-			if (warnings)
+			if (cfg_warnings)
 				Warning() << "NMEA Receive: " << e.what();
 		}
 	}

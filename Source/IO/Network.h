@@ -177,7 +177,6 @@ namespace IO
 		bool persistent = true;
 		std::string uuid;
 		bool include_sample_start = false;
-		unsigned long lines_sent = 0;
 
 	public:
 		TCPClientStreamer() : OutputMessage("TCP Client") { fmt = MessageFormat::NMEA; }
@@ -194,37 +193,22 @@ namespace IO
 		int SendTo(const std::string &str)
 		{
 			if (connection)
-			{
-				lines_sent++;
 				return connection->send(str.c_str(), (int)str.length());
-			}
-
 			return -1;
 		}
 
 		int SendTo(const char *str)
 		{
 			if (connection)
-			{
-				lines_sent++;
 				return connection->send(str, strlen(str));
-			}
 			return -1;
 		}
 
 		int SendTo(const char *data, int len)
 		{
 			if (connection)
-			{
-				lines_sent++;
 				return connection->send(data, len);
-			}
 			return -1;
-		}
-
-		bool isFirstDataSend()
-		{
-			return tcp.getBytesSent() == 0;
 		}
 	};
 
