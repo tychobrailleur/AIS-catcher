@@ -70,7 +70,7 @@ namespace AIS
 
 		// Multi-part: check sequence continuity
 		int result = search();
-		if (aivdm.number != result + 1 || result == -1)
+		if (aivdm.number != result + 1)
 		{
 			clean(aivdm);
 			if (aivdm.number != 1)
@@ -962,23 +962,23 @@ namespace AIS
 		if (c == '{')
 		{
 			state = ParseState::JSON;
-			line = c;
+			line += c;
 			count = 1;
 		}
 		else if (c == '\\')
 		{
 			state = ParseState::TAG_BLOCK;
-			line = c;
+			line += c;
 		}
 		else if (c == '$' || c == '!')
 		{
 			state = ParseState::NMEA;
-			line = c;
+			line += c;
 		}
 		else if ((unsigned char)c == 0xac)
 		{
 			state = ParseState::BINARY;
-			line = c;
+			line += c;
 		}
 		else
 		{
@@ -1107,50 +1107,42 @@ namespace AIS
 
 	void NMEA::Receive(const RAW *data, int len, TAG &tag)
 	{
-		try
+		for (int j = 0; j < len; j++)
 		{
-			for (int j = 0; j < len; j++)
-			{
-				buf = (const char *)data[j].data;
-				bufsize = data[j].size;
-				pos = 0;
+			buf = (const char *)data[j].data;
+			bufsize = data[j].size;
+			pos = 0;
 
-				while (pos < bufsize)
+			while (pos < bufsize)
+			{
+				switch (state)
 				{
-					switch (state)
+				case ParseState::FIND_START:
+					findStart();
+					break;
+				case ParseState::SKIP_TO_EOL:
+					while (pos < bufsize && buf[pos] != '\n')
+						pos++;
+					if (pos < bufsize)
 					{
-					case ParseState::FIND_START:
-						findStart();
-						break;
-					case ParseState::SKIP_TO_EOL:
-						while (pos < bufsize && buf[pos] != '\n')
-							pos++;
-						if (pos < bufsize)
-						{
-							pos++;
-							state = ParseState::FIND_START;
-						}
-						break;
-					case ParseState::NMEA:
-					case ParseState::TAG_BLOCK:
-						scanLine(tag);
-						break;
-					case ParseState::JSON:
-						scanJSON(tag);
-						break;
-					case ParseState::BINARY:
-						scanBinary(tag);
-						break;
-					default:
-						break;
+						pos++;
+						state = ParseState::FIND_START;
 					}
+					break;
+				case ParseState::NMEA:
+				case ParseState::TAG_BLOCK:
+					scanLine(tag);
+					break;
+				case ParseState::JSON:
+					scanJSON(tag);
+					break;
+				case ParseState::BINARY:
+					scanBinary(tag);
+					break;
+				default:
+					break;
 				}
 			}
-		}
-		catch (std::exception &e)
-		{
-			if (cfg_warnings)
-				Warning() << "NMEA Receive: " << e.what();
 		}
 	}
 }
