@@ -318,7 +318,8 @@ std::string WebViewer::decodeNMEAtoJSON(const std::string &nmea_input, bool enha
 	builder.setStringifyEnhanced(enhanced);
 	NMEADecoder decoder(&builder, &w);
 
-	RAW raw = {Format::TXT, (void *)nmea_input.c_str(), (int)nmea_input.length()};
+	std::string input = nmea_input + "\n";
+	RAW raw = {Format::TXT, (void *)input.c_str(), (int)input.length()};
 	TAG tag;
 	decoder.nmea_decoder.Receive(&raw, 1, tag);
 
