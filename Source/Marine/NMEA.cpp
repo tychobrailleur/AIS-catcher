@@ -28,7 +28,7 @@ namespace AIS
 
 	void NMEA::reset()
 	{
-		state = ParseState::IDLE;
+		state = ParseState::FIND_START;
 		line.clear();
 	}
 
@@ -953,39 +953,48 @@ namespace AIS
 
 	void NMEA::findStart()
 	{
-		SWAR_SKIP(buf, pos, bufsize, C('$') || C('!') || C('{') || C('\\') || C((char)0xac))
-
-		for (; pos < bufsize; pos++)
+		// Skip whitespace/line-ending characters
+		while (pos < bufsize)
 		{
 			char c = buf[pos];
-			if (c == '{')
-			{
-				state = ParseState::JSON;
-				line = c;
-				count = 1;
-			}
-			else if (c == '\\')
-			{
-				state = ParseState::TAG_BLOCK;
-				line = c;
-			}
-			else if (c == '$' || c == '!')
-			{
-				state = ParseState::NMEA;
-				line = c;
-			}
-			else if ((unsigned char)c == 0xac)
-			{
-				state = ParseState::BINARY;
-				line = c;
-			}
+			if (c == '\r' || c == '\n' || c == '\t' || c == ' ' || c == '\0')
+				pos++;
 			else
-			{
-				continue;
-			}
-			pos++;
+				break;
+		}
+		if (pos >= bufsize)
+			return;
+
+		// Check if first non-whitespace character is a valid start
+		char c = buf[pos];
+		if (c == '{')
+		{
+			state = ParseState::JSON;
+			line = c;
+			count = 1;
+		}
+		else if (c == '\\')
+		{
+			state = ParseState::TAG_BLOCK;
+			line = c;
+		}
+		else if (c == '$' || c == '!')
+		{
+			state = ParseState::NMEA;
+			line = c;
+		}
+		else if ((unsigned char)c == 0xac)
+		{
+			state = ParseState::BINARY;
+			line = c;
+		}
+		else
+		{
+			// Not a valid start — skip rest of line
+			state = ParseState::SKIP_TO_EOL;
 			return;
 		}
+		pos++;
 	}
 
 	void NMEA::scanLine(TAG &tag)
@@ -996,7 +1005,7 @@ namespace AIS
 		while (pos < limit)
 		{
 			char c = buf[pos];
-			if (c == '\r' || c == '\n' || c == '\t' || c == '\0')
+			if (c == '\r' || c == '\n')
 				break;
 			pos++;
 		}
@@ -1116,13 +1125,20 @@ namespace AIS
 
 				while (pos < bufsize)
 				{
-					if (state == ParseState::IDLE)
-					{
-						findStart();
-						continue;
-					}
 					switch (state)
 					{
+					case ParseState::FIND_START:
+						findStart();
+						break;
+					case ParseState::SKIP_TO_EOL:
+						while (pos < bufsize && buf[pos] != '\n')
+							pos++;
+						if (pos < bufsize)
+						{
+							pos++;
+							state = ParseState::FIND_START;
+						}
+						break;
 					case ParseState::NMEA:
 					case ParseState::TAG_BLOCK:
 						scanLine(tag);

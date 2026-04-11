@@ -39,11 +39,12 @@ namespace AIS
 
 		enum class ParseState
 		{
-			IDLE,
-			JSON,
+			FIND_START,
+			SKIP_TO_EOL,
 			NMEA,
-			BINARY,
-			TAG_BLOCK
+			TAG_BLOCK,
+			JSON,
+			BINARY
 		};
 
 		struct AIVDM
@@ -96,7 +97,7 @@ namespace AIS
 		bool partEmpty(int i) const { return partLen(i) == 0; }
 		std::string partStr(int i) const { return splitStr->substr(splitDelim[i] + 1, partLen(i)); }
 		int partInt(int i) const;
-		ParseState state = ParseState::IDLE;
+		ParseState state = ParseState::FIND_START;
 		std::string line;
 		int count = 0;
 
