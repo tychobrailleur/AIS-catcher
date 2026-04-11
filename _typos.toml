@@ -1,3 +1,14 @@
 [default.extend-words]
 FO = "FO"
 fo = "fo"
+SART = "SART"
+Ser = "Ser"
+BA = "BA"
+ba = "ba"
+
+[files]
+extend-exclude = [
+    "msvc/",
+    "Source/Application/WebDB.cpp",
+    "frontend/",
+]
