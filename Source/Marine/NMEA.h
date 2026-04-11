@@ -92,6 +92,10 @@ namespace AIS
 		bool partEmpty(int i) const { return partLen(i) == 0; }
 		std::string partStr(int i) const { return splitStr->substr(splitDelim[i] + 1, partLen(i)); }
 		int partInt(int i) const;
+		static const int MAX_NMEA_LINE = 1024;
+		static const int MAX_JSON_LINE = 2048;
+		static const int MAX_BINARY_LINE = 1024;
+
 		ParseState state = ParseState::FIND_START;
 		std::string line;
 		int count = 0;
@@ -139,6 +143,23 @@ namespace AIS
 		bool cfg_VDO = true;
 		bool cfg_warnings = true;
 		bool cfg_GPS = true;
+
+		enum WarnBit : int {
+			WARN_INVALID_MSG, WARN_GPS_FIELD_COUNT, WARN_GPS_CHECKSUM, WARN_GPS_COORDS,
+			WARN_AIS_TALKER, WARN_AIS_HEADER, WARN_AIS_TAIL, WARN_AIS_FILLBITS,
+			WARN_AIS_ID, WARN_AIS_CHANNEL, WARN_AIS_PAYLOAD, WARN_NMEA_CHECKSUM,
+			WARN_JSON_PARSE, WARN_JSON_NEWLINE,
+			WARN_BINARY_SHORT, WARN_BINARY_LENGTH, WARN_BINARY_CRC, WARN_BINARY_VALIDATION,
+			WARN_TAG_NO_CLOSE, WARN_TAG_NO_NMEA, WARN_TAG_CHECKSUM
+		};
+		uint64_t warned = 0;
+
+		bool shouldWarn(int bit) {
+			uint64_t m = 1ULL << bit;
+			bool first = cfg_warnings && !(warned & m);
+			warned |= m; 
+			return first;
+		}
 
 		JSON::Parser parser;
 		JSON::Document jsonDoc;

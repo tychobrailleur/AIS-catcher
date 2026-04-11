@@ -59,7 +59,7 @@ namespace AIS
 			msg.Stamp();
 		else
 			msg.setRxTimeMicros(mctx.rxtime);
-		
+
 		msg.setTOA(mctx.toa);
 		msg.setOrigin(channel, src, own_mmsi);
 	}
@@ -104,9 +104,9 @@ namespace AIS
 				msg.buildNMEA(tag, aivdm.match_key & 0x0F);
 			Send(&msg, 1, tag);
 		}
-		else if (cfg_warnings)
+		else if (shouldWarn(WARN_INVALID_MSG))
 		{
-			Warning() << "NMEA: invalid message of type " << msg.type() << " and length " << msg.getLength() << " from station " << src << ".";
+			Warning() << "NMEA: invalid message of type " << msg.type() << " and length " << msg.getLength() << " from station " << src;
 		}
 
 		clean(aivdm);
@@ -273,9 +273,9 @@ namespace AIS
 	}
 
 	bool NMEA::processGPS(const std::string &s, TAG &tag, const char *name,
-						   int min_fields, int max_fields,
-						   int lat_idx, int ns_idx, int lon_idx, int ew_idx,
-						   int fix_idx)
+						  int min_fields, int max_fields,
+						  int lat_idx, int ns_idx, int lon_idx, int ew_idx,
+						  int fix_idx)
 	{
 		if (!cfg_GPS)
 			return true;
@@ -284,8 +284,8 @@ namespace AIS
 
 		if (splitCount < min_fields || splitCount > max_fields)
 		{
-			if (cfg_warnings)
-				Warning() << name << ": expected " << min_fields << " fields, got " << splitCount;
+			if (shouldWarn(WARN_GPS_FIELD_COUNT))
+				Warning() << name << ": expected " << min_fields << " fields, got " << splitCount << " [" << s.substr(0, 20) << "...]";
 			return false;
 		}
 
@@ -293,8 +293,8 @@ namespace AIS
 		int checksum = partLen(last) > 2 ? (hexDigitValue(partAt(last, partLen(last) - 2)) << 4) | hexDigitValue(partAt(last, partLen(last) - 1)) : -1;
 		if (checksum != splitChecksum)
 		{
-			if (cfg_warnings)
-				Warning() << name << ": checksum mismatch";
+			if (shouldWarn(WARN_GPS_CHECKSUM))
+				Warning() << name << ": checksum mismatch [" << s.substr(0, 20) << "...]";
 			if (cfg_crc_check)
 				return false;
 		}
@@ -310,17 +310,17 @@ namespace AIS
 			return false;
 
 		bool error = false;
-		GPS gps(GpsToDecimal(partPtr(lat_idx), partLen(lat_idx), partAt(ns_idx, 0), error),
-				GpsToDecimal(partPtr(lon_idx), partLen(lon_idx), partAt(ew_idx, 0), error),
-				s, std::string());
+		float lat = GpsToDecimal(partPtr(lat_idx), partLen(lat_idx), partAt(ns_idx, 0), error);
+		float lon = GpsToDecimal(partPtr(lon_idx), partLen(lon_idx), partAt(ew_idx, 0), error);
 
 		if (error)
 		{
-			if (cfg_warnings)
-				Warning() << name << ": invalid coordinates";
+			if (shouldWarn(WARN_GPS_COORDS))
+				Warning() << name << ": invalid coordinates [" << s.substr(0, 20) << "...]";
 			return false;
 		}
 
+		GPS gps(lat, lon, s, false);
 		outGPS.Send(&gps, 1, tag);
 		return true;
 	}
@@ -339,14 +339,14 @@ namespace AIS
 		char t1 = p[1], t2 = p[2];
 		if (!(t1 >= 'A' && t1 <= 'Z') || (!(t2 >= 'A' && t2 <= 'Z') && !(t2 >= '0' && t2 <= '9')))
 		{
-			if (cfg_warnings)
-				Warning() << "AIS: invalid talker ID in [" << str << "]";
+			if (shouldWarn(WARN_AIS_TALKER))
+				Warning() << "AIS: invalid talker ID [" << str.substr(0, 20) << "...]";
 			return false;
 		}
 		if (p[6] != ',' || p[8] != ',' || p[10] != ',' || p[7] < '1' || p[7] > '9' || p[9] < '1' || p[9] > '9')
 		{
-			if (cfg_warnings)
-				Warning() << "AIS: malformed header in [" << str << "]";
+			if (shouldWarn(WARN_AIS_HEADER))
+				Warning() << "AIS: malformed header [" << str.substr(0, 20) << "...]";
 			return false;
 		}
 
@@ -354,16 +354,16 @@ namespace AIS
 		const char *end = p + len;
 		if (!isHexDigit(end[-1]) || !isHexDigit(end[-2]) || end[-3] != '*' || end[-5] != ',')
 		{
-			if (cfg_warnings)
-				Warning() << "AIS: malformed tail in [" << str << "]";
+			if (shouldWarn(WARN_AIS_TAIL))
+				Warning() << "AIS: malformed tail [" << str.substr(0, 20) << "...]";
 			return false;
 		}
 		int checksum = (hexDigitValue(end[-2]) << 4) | hexDigitValue(end[-1]);
 		char fillbits_ch = end[-4];
 		if (fillbits_ch < '0' || fillbits_ch > '5')
 		{
-			if (cfg_warnings)
-				Warning() << "AIS: invalid fillbits in [" << str << "]";
+			if (shouldWarn(WARN_AIS_FILLBITS))
+				Warning() << "AIS: invalid fillbits [" << str.substr(0, 20) << "...]";
 			return false;
 		}
 
@@ -374,8 +374,8 @@ namespace AIS
 			id_ch = *q++;
 		if (*q != ',')
 		{
-			if (cfg_warnings)
-				Warning() << "AIS: invalid ID field in [" << str << "]";
+			if (shouldWarn(WARN_AIS_ID))
+				Warning() << "AIS: invalid ID field [" << str.substr(0, 20) << "...]";
 			return false;
 		}
 		q++;
@@ -385,8 +385,8 @@ namespace AIS
 			channel_ch = *q++;
 		if (*q != ',')
 		{
-			if (cfg_warnings)
-				Warning() << "AIS: invalid channel field in [" << str << "]";
+			if (shouldWarn(WARN_AIS_CHANNEL))
+				Warning() << "AIS: invalid channel field [" << str.substr(0, 20) << "...]";
 			return false;
 		}
 		q++;
@@ -394,8 +394,8 @@ namespace AIS
 		const char *payload_end = end - 5;
 		if (q > payload_end)
 		{
-			if (cfg_warnings)
-				Warning() << "AIS: empty payload in [" << str << "]";
+			if (shouldWarn(WARN_AIS_PAYLOAD))
+				Warning() << "AIS: empty payload [" << str.substr(0, 20) << "...]";
 			return false;
 		}
 
@@ -409,8 +409,8 @@ namespace AIS
 
 		if (checksum != cs)
 		{
-			if (cfg_warnings)
-				Warning() << "NMEA: incorrect checksum from station " << src << ".";
+			if (shouldWarn(WARN_NMEA_CHECKSUM))
+				Warning() << "NMEA: incorrect checksum from station " << src;
 			if (cfg_crc_check)
 				return true;
 			message_error = MESSAGE_ERROR_NMEA_CHECKSUM;
@@ -435,9 +435,9 @@ namespace AIS
 					msg.NMEA.push_back(str);
 				Send(&msg, 1, tag);
 			}
-			else if (msg.getLength() > 0 && cfg_warnings)
+			else if (shouldWarn(WARN_INVALID_MSG))
 			{
-				Warning() << "NMEA: invalid message of type " << msg.type() << " and length " << msg.getLength() << " from station " << src << ".";
+				Warning() << "NMEA: invalid message of type " << msg.type() << " and length " << msg.getLength() << " from station " << src;
 			}
 			return true;
 		}
@@ -491,7 +491,7 @@ namespace AIS
 				DEV_AIS_CATCHER,
 				DEV_DAISY_CATCHER
 			} dev = DEV_UNKNOWN;
-			
+
 			bool uuid_match = uuid.empty();
 			const std::string *message = nullptr;
 			const JSON::Value *nmea_array = nullptr;
@@ -608,14 +608,14 @@ namespace AIS
 
 			if (cls == CLS_TPV && cfg_GPS && has_tpv_coords && (tpv_lat != 0 || tpv_lon != 0))
 			{
-				GPS gps(tpv_lat, tpv_lon, std::string(), line);
+				GPS gps(tpv_lat, tpv_lon, line, true);
 				outGPS.Send(&gps, 1, tag);
 			}
 		}
 		catch (std::exception const &e)
 		{
-			if (cfg_warnings)
-				Warning() << "JSON: " << e.what();
+			if (shouldWarn(WARN_JSON_PARSE))
+				Warning() << "JSON: " << e.what() << " [" << line.substr(0, 20) << "...]";
 		}
 	}
 
@@ -669,7 +669,7 @@ namespace AIS
 		uint8_t b;
 		if (!readByte(b) || b != 0xac || !readByte(b) || b != 0x00)
 		{
-			if (cfg_warnings)
+			if (shouldWarn(WARN_BINARY_SHORT))
 				Warning() << "binary: " << (too_short ? "packet too short" : "invalid header");
 			return false;
 		}
@@ -677,7 +677,7 @@ namespace AIS
 		uint8_t flags;
 		if (!readByte(flags))
 		{
-			if (cfg_warnings)
+			if (shouldWarn(WARN_BINARY_SHORT))
 				Warning() << "binary: packet too short";
 			return false;
 		}
@@ -691,7 +691,7 @@ namespace AIS
 		}
 		if (too_short)
 		{
-			if (cfg_warnings)
+			if (shouldWarn(WARN_BINARY_SHORT))
 				Warning() << "binary: packet too short";
 			return false;
 		}
@@ -701,7 +701,7 @@ namespace AIS
 			uint8_t h, l, p;
 			if (!readByte(h) || !readByte(l) || !readByte(p))
 			{
-				if (cfg_warnings)
+				if (shouldWarn(WARN_BINARY_SHORT))
 					Warning() << "binary: packet too short";
 				return false;
 			}
@@ -712,7 +712,7 @@ namespace AIS
 		uint8_t ch, lh, ll;
 		if (!readByte(ch) || !readByte(lh) || !readByte(ll))
 		{
-			if (cfg_warnings)
+			if (shouldWarn(WARN_BINARY_SHORT))
 				Warning() << "binary: packet too short";
 			return false;
 		}
@@ -720,7 +720,7 @@ namespace AIS
 
 		if (length_bits < 0 || length_bits > MAX_AIS_LENGTH)
 		{
-			if (cfg_warnings)
+			if (shouldWarn(WARN_BINARY_LENGTH))
 				Warning() << "binary: invalid message length " << length_bits;
 			return false;
 		}
@@ -739,7 +739,7 @@ namespace AIS
 		}
 		if (too_short)
 		{
-			if (cfg_warnings)
+			if (shouldWarn(WARN_BINARY_SHORT))
 				Warning() << "binary: packet too short";
 			return false;
 		}
@@ -751,14 +751,14 @@ namespace AIS
 			uint8_t ch2, cl2;
 			if (!readByte(ch2) || !readByte(cl2))
 			{
-				if (cfg_warnings)
+				if (shouldWarn(WARN_BINARY_SHORT))
 					Warning() << "binary: packet too short for CRC";
 				return false;
 			}
 			uint16_t recv_crc = (ch2 << 8) | cl2;
 			if (recv_crc != calc_crc)
 			{
-				if (cfg_warnings)
+				if (shouldWarn(WARN_BINARY_CRC))
 					Warning() << "binary: CRC mismatch";
 				if (cfg_crc_check)
 					return false;
@@ -767,7 +767,7 @@ namespace AIS
 
 		if (!msg.validate())
 		{
-			if (cfg_warnings)
+			if (shouldWarn(WARN_BINARY_VALIDATION))
 				Warning() << "binary: message validation failed (type " << msg.type() << ", length " << msg.getLength() << ")";
 			return false;
 		}
@@ -787,15 +787,15 @@ namespace AIS
 			tagEnd++;
 		if (tagEnd >= len)
 		{
-			if (cfg_warnings)
-				Warning() << "tag block: no closing backslash";
+			if (shouldWarn(WARN_TAG_NO_CLOSE))
+				Warning() << "tag block: no closing backslash [" << s.substr(0, 20) << "...]";
 			return false;
 		}
 
 		nmea = s.substr(tagEnd + 1);
 		if (nmea.empty())
 		{
-			if (cfg_warnings)
+			if (shouldWarn(WARN_TAG_NO_NMEA))
 				Warning() << "tag block: no NMEA sentence after tag block";
 			return false;
 		}
@@ -822,7 +822,7 @@ namespace AIS
 					actual ^= *q;
 				if (expected != actual)
 				{
-					if (cfg_warnings)
+					if (shouldWarn(WARN_TAG_CHECKSUM))
 						Warning() << "tag block: checksum mismatch";
 					if (cfg_crc_check)
 						return false;
@@ -991,7 +991,7 @@ namespace AIS
 
 	void NMEA::scanLine(TAG &tag)
 	{
-		int limit = MIN(bufsize, pos + (int)(1025 - line.size()));
+		int limit = MIN(bufsize, pos + (int)(MAX_NMEA_LINE + 1 - line.size()));
 		int start = pos;
 
 		while (pos < limit)
@@ -1023,13 +1023,16 @@ namespace AIS
 			return;
 		}
 
-		if (line.size() > 1024)
-			reset();
+		if ((int)line.size() > MAX_NMEA_LINE)
+		{
+			state = ParseState::SKIP_TO_EOL;
+			line.clear();
+		}
 	}
 
 	void NMEA::scanJSON(TAG &tag)
 	{
-		int limit = MIN(bufsize, pos + (int)(4097 - line.size()));
+		int limit = MIN(bufsize, pos + (int)(MAX_JSON_LINE + 1 - line.size()));
 		int start = pos;
 
 		SWAR_SKIP(buf, pos, limit, C('{') || C('}') || C('\r') || C('\n') || C('\t') || C('\0'))
@@ -1055,19 +1058,16 @@ namespace AIS
 			}
 			else if (c == '\r' || c == '\n' || c == '\t' || c == '\0')
 			{
-				if (cfg_warnings)
-					Warning() << "NMEA: newline in uncompleted JSON input not allowed";
+				if (shouldWarn(WARN_JSON_NEWLINE))
+					Warning() << "NMEA: newline in uncompleted JSON input";
 
 				reset();
 				return;
 			}
 		}
 
-		if (line.size() + pos - start > 4096)
+		if ((int)(line.size() + pos - start) > MAX_JSON_LINE)
 		{
-			if (cfg_warnings)
-				Warning() << "NMEA: JSON sentence too long";
-
 			state = ParseState::SKIP_TO_EOL;
 			line.clear();
 			return;
@@ -1079,7 +1079,7 @@ namespace AIS
 
 	void NMEA::scanBinary(TAG &tag)
 	{
-		int limit = MIN(bufsize, pos + (int)(1025 - line.size()));
+		int limit = MIN(bufsize, pos + (int)(MAX_BINARY_LINE + 1 - line.size()));
 		int start = pos;
 
 		SWAR_SKIP(buf, pos, limit, C('\n'))
@@ -1102,8 +1102,11 @@ namespace AIS
 			return;
 		}
 
-		if (line.size() > 1024)
-			reset();
+		if ((int)line.size() > MAX_BINARY_LINE)
+		{
+			state = ParseState::SKIP_TO_EOL;
+			line.clear();
+		}
 	}
 
 	void NMEA::Receive(const RAW *data, int len, TAG &tag)

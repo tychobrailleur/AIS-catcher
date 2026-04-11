@@ -40,13 +40,13 @@ namespace AIS
 	class GPS
 	{
 		float lat = 0, lon = 0;
-		std::string nmea;
-		std::string json;
+		const std::string &source;
+		bool isJSON;
 
 		const std::string formatLatLon(float, bool) const;
 
 	public:
-		GPS(float lt, float ln, std::string s, std::string j) : lat(lt), lon(ln), nmea(std::move(s)), json(std::move(j)) {}
+		GPS(float lt, float ln, const std::string &src, bool json) : lat(lt), lon(ln), source(src), isJSON(json) {}
 
 		float getLat() const { return lat; }
 		float getLon() const { return lon; }

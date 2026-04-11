@@ -48,34 +48,32 @@ namespace AIS
 
 	const std::string GPS::getNMEA() const
 	{
-		if (nmea.empty())
-		{
-			std::string flat = formatLatLon(lat, true);
-			std::string flon = formatLatLon(lon, false);
+		if (!isJSON)
+			return source;
 
-			char latDir = lat >= 0 ? 'N' : 'S';
-			char lonDir = lon >= 0 ? 'E' : 'W';
+		std::string flat = formatLatLon(lat, true);
+		std::string flon = formatLatLon(lon, false);
 
-			std::string line = "$GPGLL," + flat + "," + latDir + "," + flon + "," + lonDir + ",,,";
+		char latDir = lat >= 0 ? 'N' : 'S';
+		char lonDir = lon >= 0 ? 'E' : 'W';
 
-			int c = NMEAchecksum(line);
+		std::string line = "$GPGLL," + flat + "," + latDir + "," + flon + "," + lonDir + ",,,";
 
-			line += '*';
-			line += (c >> 4) < 10 ? (c >> 4) + '0' : (c >> 4) + 'A' - 10;
-			line += (c & 0xF) < 10 ? (c & 0xF) + '0' : (c & 0xF) + 'A' - 10;
+		int c = NMEAchecksum(line);
 
-			return line;
-		}
-		else
-			return nmea;
+		line += '*';
+		line += (c >> 4) < 10 ? (c >> 4) + '0' : (c >> 4) + 'A' - 10;
+		line += (c & 0xF) < 10 ? (c & 0xF) + '0' : (c & 0xF) + 'A' - 10;
+
+		return line;
 	}
 
 	const std::string GPS::getJSON() const
 	{
-		if (json.empty())
-			return "{\"class\":\"TPV\",\"lat\":" + std::to_string(lat) + ",\"lon\":" + std::to_string(lon) + "}";
-		else
-			return json;
+		if (isJSON)
+			return source;
+
+		return "{\"class\":\"TPV\",\"lat\":" + std::to_string(lat) + ",\"lon\":" + std::to_string(lon) + "}";
 	}
 
 	int Message::getNMEAJSON(std::string &out, const TAG &tag, bool include_ssl, const std::string &uuid, const char *suffix) const
