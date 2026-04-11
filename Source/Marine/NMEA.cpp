@@ -1029,7 +1029,7 @@ namespace AIS
 
 	void NMEA::scanJSON(TAG &tag)
 	{
-		int limit = MIN(bufsize, pos + (int)(1025 - line.size()));
+		int limit = MIN(bufsize, pos + (int)(4097 - line.size()));
 		int start = pos;
 
 		SWAR_SKIP(buf, pos, limit, C('{') || C('}') || C('\r') || C('\n') || C('\t') || C('\0'))
@@ -1063,12 +1063,13 @@ namespace AIS
 			}
 		}
 
-		if (line.size() + pos - start > 1024)
+		if (line.size() + pos - start > 4096)
 		{
 			if (cfg_warnings)
 				Warning() << "NMEA: JSON sentence too long";
 
-			reset();
+			state = ParseState::SKIP_TO_EOL;
+			line.clear();
 			return;
 		}
 
