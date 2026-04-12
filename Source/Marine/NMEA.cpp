@@ -399,6 +399,22 @@ namespace AIS
 			return false;
 		}
 
+		for (const char *r = q; r < payload_end; r++)
+		{
+			unsigned char c = (unsigned char)*r;
+			if (!((c >= '0' && c <= 'W') || (c >= '`' && c <= 'w')))
+			{
+				if (shouldWarn(WARN_AIS_PAYLOAD))
+				{
+					if (c == ',')
+						Warning() << "AIS: too many parts [" << str.substr(0, 20) << "...]";
+					else
+						Warning() << "AIS: invalid payload character '" << (char)c << "' [" << str.substr(0, 20) << "...]";
+				}
+				return false;
+			}
+		}
+
 		int cs = 0;
 		for (const char *r = p + 1; r < end - 3; r++)
 			cs ^= *r;
@@ -410,7 +426,7 @@ namespace AIS
 		if (checksum != cs)
 		{
 			if (shouldWarn(WARN_NMEA_CHECKSUM))
-				Warning() << "NMEA: incorrect checksum from station " << src;
+				Warning() << "AIS: checksum mismatch [" << str.substr(0, 20) << "...]";
 			if (cfg_crc_check)
 				return true;
 			message_error = MESSAGE_ERROR_NMEA_CHECKSUM;
