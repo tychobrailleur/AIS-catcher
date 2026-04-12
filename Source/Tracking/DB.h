@@ -121,8 +121,10 @@ class DB : public StreamIn<JSON::JSON>,
 	int binaryMsgIndex = 0;
 
 	void processBinaryMessage(const JSON::JSON &data, Ship &ship, bool &position_updated);
+#ifdef CHECK_DB_INTEGRITY
 	void checkIntegrity();
 	int update_counter = 0;
+#endif
 
 public:
 	DB() : builder(JSON_DICT_FULL) {}
@@ -147,6 +149,9 @@ public:
 	float getLon() { return lon; }
 
 	void setOwnMMSI(uint32_t mmsi) { own_mmsi = mmsi; }
+
+	using StreamIn<JSON::JSON>::Receive;
+	using StreamIn<AIS::GPS>::Receive;
 
 	void Receive(const JSON::JSON *data, int len, TAG &tag);
 	void Receive(const AIS::GPS *data, int len, TAG &tag)

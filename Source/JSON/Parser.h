@@ -94,14 +94,14 @@ namespace JSON
 			return h;
 		}
 
-		void error(const std::string &err, int pos);
+		[[noreturn]] void error(const std::string &err, int pos);
 
 		// tokenizer
 		void skip_whitespace();
 		void next();
 
 		// parser
-		void error_parser(const std::string &err);
+		[[noreturn]] void error_parser(const std::string &err);
 		bool is_match(TokenType t);
 		void must_match(TokenType t, const std::string &err);
 		int search();

@@ -1270,6 +1270,7 @@ bool DB::Load(std::ifstream &file)
 	return true;
 }
 
+#ifdef CHECK_DB_INTEGRITY
 void DB::checkIntegrity()
 {
 	int errors = 0;
@@ -1452,3 +1453,4 @@ void DB::checkIntegrity()
 	if (errors)
 		Error() << "DB integrity: " << errors << " errors found";
 }
+#endif

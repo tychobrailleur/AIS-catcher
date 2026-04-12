@@ -37,6 +37,10 @@ namespace IO
 			setOptionKey(AIS::KEY_SETTING_MSGFORMAT, str);
 		}
 
+		using StreamIn<AIS::Message>::Receive;
+		using StreamIn<JSON::JSON>::Receive;
+		using StreamIn<AIS::GPS>::Receive;
+
 		void Receive(const AIS::Message *data, int len, TAG &tag);
 		void Receive(const JSON::JSON *data, int len, TAG &tag);
 		void Receive(const AIS::GPS *data, int len, TAG &tag);

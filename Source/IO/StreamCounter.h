@@ -41,6 +41,9 @@ namespace IO
 
 		virtual ~StreamCounter() {}
 
+		using StreamIn<AIS::Message>::Receive;
+		using StreamIn<Plane::ADSB>::Receive;
+
 		void Receive(const AIS::Message *data, int len, TAG &tag) override
 		{
 			count += len;

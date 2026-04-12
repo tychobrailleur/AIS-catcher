@@ -29,7 +29,7 @@ namespace JSON
 
 	// Parser -- Build JSON object from String
 
-	void Parser::error(const std::string &err, int pos)
+	[[noreturn]] void Parser::error(const std::string &err, int pos)
 	{
 		const int char_limit = 40;
 		int sz = (int)(pend - p_start);
@@ -338,7 +338,7 @@ namespace JSON
 
 	// Parsing functions
 
-	void Parser::error_parser(const std::string &err)
+	[[noreturn]] void Parser::error_parser(const std::string &err)
 	{
 		error(err, (int)(tokenStart - p_start));
 	}

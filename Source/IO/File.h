@@ -53,6 +53,10 @@ namespace IO
 				file.close();
 		}
 
+		using StreamIn<AIS::Message>::Receive;
+		using StreamIn<JSON::JSON>::Receive;
+		using StreamIn<AIS::GPS>::Receive;
+
 		void Receive(const AIS::Message *data, int len, TAG &tag)
 		{
 			if (fmt == MessageFormat::NMEA)

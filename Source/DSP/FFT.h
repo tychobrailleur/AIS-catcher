@@ -35,11 +35,11 @@ namespace FFT
 
 	static int rev(int x, int logN)
 	{
-#ifdef HASRBIT
+#if defined(HASRBIT) && (defined(__aarch64__) || defined(__arm__))
 		unsigned int r;
 #if defined(__aarch64__)
 		__asm__("rbit %w0, %w1" : "=r"(r) : "r"((unsigned)x));
-#elif defined(__arm__)
+#else
 		__asm__("rbit %0, %1" : "=r"(r) : "r"((unsigned)x));
 #endif
 		return (int)(r >> (32 - logN));

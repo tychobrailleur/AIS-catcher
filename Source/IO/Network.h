@@ -86,6 +86,10 @@ namespace IO
 		void post();
 		void process();
 
+		using StreamIn<AIS::Message>::Receive;
+		using StreamIn<JSON::JSON>::Receive;
+		using StreamIn<AIS::GPS>::Receive;
+
 		void Receive(const JSON::JSON *data, int len, TAG &tag) override;
 		void Receive(const AIS::GPS *data, int len, TAG &tag) override;
 
@@ -143,6 +147,10 @@ namespace IO
 
 		Setting &SetKey(AIS::Keys key, const std::string &arg) override;
 
+		using StreamIn<AIS::Message>::Receive;
+		using StreamIn<JSON::JSON>::Receive;
+		using StreamIn<AIS::GPS>::Receive;
+
 		void Receive(const AIS::Message *data, int len, TAG &tag) override;
 		void Receive(const JSON::JSON *data, int len, TAG &tag) override;
 		void Receive(const AIS::GPS *data, int len, TAG &tag) override;
@@ -182,6 +190,10 @@ namespace IO
 		TCPClientStreamer() : OutputMessage("TCP Client") { fmt = MessageFormat::NMEA; }
 
 		Setting &SetKey(AIS::Keys key, const std::string &arg) override;
+
+		using StreamIn<AIS::Message>::Receive;
+		using StreamIn<JSON::JSON>::Receive;
+		using StreamIn<AIS::GPS>::Receive;
 
 		void Receive(const AIS::Message *data, int len, TAG &tag) override;
 		void Receive(const JSON::JSON *data, int len, TAG &tag) override;
@@ -224,6 +236,10 @@ namespace IO
 
 		Setting &SetKey(AIS::Keys key, const std::string &arg) override;
 
+		using StreamIn<AIS::Message>::Receive;
+		using StreamIn<JSON::JSON>::Receive;
+		using StreamIn<AIS::GPS>::Receive;
+
 		void Receive(const AIS::Message *data, int len, TAG &tag) override;
 		void Receive(const JSON::JSON *data, int len, TAG &tag) override;
 		void Receive(const AIS::GPS *data, int len, TAG &tag) override;
@@ -253,6 +269,10 @@ namespace IO
 
 		void Start() override;
 		void Stop() override;
+
+		using StreamIn<AIS::Message>::Receive;
+		using StreamIn<JSON::JSON>::Receive;
+		using StreamIn<AIS::GPS>::Receive;
 
 		void Receive(const AIS::Message *data, int len, TAG &tag) override;
 		void Receive(const JSON::JSON *data, int len, TAG &tag) override;
