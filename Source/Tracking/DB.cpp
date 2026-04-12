@@ -167,7 +167,7 @@ std::string DB::getJSONcompact(bool full, std::time_t since)
 					w.beginArray().val(ship.mmsi);
 
 					if (ship.getVirtualAid())
-						w.val(ship.shipname, " [V]", 4);
+						w.val(ship.shipname, " [V]");
 					else
 						w.val(ship.shipname);
 
@@ -241,7 +241,7 @@ void DB::getShipJSON(const Ship &ship, JSON::Writer &w, long int delta_time)
 		.kv("callsign", ship.callsign);
 
 	if (ship.getVirtualAid())
-		w.kv("shipname", ship.shipname, " [V]", 4);
+		w.kv("shipname", ship.shipname, " [V]");
 	else
 		w.kv("shipname", ship.shipname);
 

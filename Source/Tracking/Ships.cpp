@@ -142,7 +142,7 @@ bool Ship::getGeoJSON(JSON::Writer &w) const
 		.kv_unless("imo", IMO, IMO_UNDEFINED).kv("callsign", callsign);
 
 	if (getVirtualAid())
-		w.kv("shipname", shipname, " [V]", 4);
+		w.kv("shipname", shipname, " [V]");
 	else
 		w.kv("shipname", shipname);
 

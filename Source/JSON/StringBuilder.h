@@ -22,6 +22,7 @@
 #include <memory>
 #include <cstring>
 #include <cstdio>
+#include <type_traits>
 
 #include "Common.h"
 #include "JSON.h"
@@ -55,6 +56,37 @@ namespace JSON
 	// same target string is reused.
 	class Writer
 	{
+	public:
+		// String reference — captures pointer + length at the call site.
+		// Unifies the (const char*, size_t), literal array, std::string, and
+		// C-string entry points into a single overload per method.
+		// Literals fold to compile-time length; char arrays use bounded
+		// strnlen; std::string uses size().
+		struct StringRef
+		{
+			const char *p;
+			size_t n;
+			StringRef(const char *s) : p(s), n(strlen(s)) {}
+			StringRef(const char *s, size_t len) : p(s), n(len) {}
+			template <size_t N>
+			StringRef(const char (&s)[N]) : p(s), n(strnlen(s, N - 1)) {}
+			StringRef(const std::string &s) : p(s.data()), n(s.size()) {}
+		};
+
+		// Key reference — captures pointer + length at the call site.
+		// Literal keys deduce length at compile time via the array ctor,
+		// eliminating runtime strlen on the hot serializer path.
+		struct KeyRef
+		{
+			const char *p;
+			size_t n;
+			KeyRef(const char *s) : p(s), n(strlen(s)) {}
+			template <size_t N>
+			KeyRef(const char (&s)[N]) : p(s), n(N - 1) {}
+			KeyRef(const std::string &s) : p(s.data()), n(s.size()) {}
+		};
+
+	private:
 		std::string *target;
 		size_t start_off;
 		char *ptr;
@@ -451,7 +483,10 @@ namespace JSON
 		// Without this overload float would reach val(double) via Floating
 		// Promotion — works, but the explicit overload removes the noise.
 		Writer &val(float v) { return val((double)v); }
-		Writer &val(bool v)
+		// Constrained to exact bool to avoid pointer->bool conversions stealing
+		// calls from val(StringRef).
+		template <typename B, typename = typename std::enable_if<std::is_same<B, bool>::value>::type>
+		Writer &val(B v)
 		{
 			reserve_more(6); // sep + "false"
 			put_sep_raw();
@@ -462,41 +497,26 @@ namespace JSON
 			need_sep = true;
 			return *this;
 		}
-		Writer &val(const char *s, size_t n)
+		Writer &val(StringRef v)
 		{
-			reserve_more(1 + n * 6 + 2);
+			reserve_more(1 + v.n * 6 + 2);
 			put_sep_raw();
-			put_string_escaped_raw(s, n);
+			put_string_escaped_raw(v.p, v.n);
 			need_sep = true;
 			return *this;
 		}
 		// Writes one JSON string value built from two pieces, no temporary
 		// allocation. Both pieces are escaped into the same "..." literal.
-		Writer &val(const char *s1, size_t n1, const char *s2, size_t n2)
+		Writer &val(StringRef s1, StringRef s2)
 		{
-			reserve_more(1 + (n1 + n2) * 6 + 2);
+			reserve_more(1 + (s1.n + s2.n) * 6 + 2);
 			put_sep_raw();
 			*ptr++ = '"';
-			put_string_escaped_body_raw(s1, n1);
-			put_string_escaped_body_raw(s2, n2);
+			put_string_escaped_body_raw(s1.p, s1.n);
+			put_string_escaped_body_raw(s2.p, s2.n);
 			*ptr++ = '"';
 			need_sep = true;
 			return *this;
-		}
-		// Fixed-size null-terminated buffer overload. Captures the array
-		// size at compile time and uses strnlen(s, N-1) — bounded, safe
-		// against missing terminators, and elides the explicit length arg
-		// at call sites: w.val(ship.shipname) instead of
-		// w.val(ship.shipname, strlen(ship.shipname)).
-		template <size_t N>
-		Writer &val(const char (&s)[N])
-		{
-			return val(s, strnlen(s, N - 1));
-		}
-		template <size_t N>
-		Writer &val(const char (&s)[N], const char *suffix, size_t suffix_n)
-		{
-			return val(s, strnlen(s, N - 1), suffix, suffix_n);
 		}
 		Writer &val_null()
 		{
@@ -513,19 +533,6 @@ namespace JSON
 		{
 			return v == sentinel ? val_null() : val(v);
 		}
-
-		// Key reference — captures pointer + length at the call site.
-		// Literal keys deduce length at compile time via the array ctor,
-		// eliminating runtime strlen on the hot serializer path.
-		struct KeyRef
-		{
-			const char *p;
-			size_t n;
-			KeyRef(const char *s) : p(s), n(strlen(s)) {}
-			template <size_t N>
-			KeyRef(const char (&s)[N]) : p(s), n(N - 1) {}
-			KeyRef(const std::string &s) : p(s.data()), n(s.size()) {}
-		};
 
 		Writer &kv(KeyRef k, long long v)
 		{
@@ -564,45 +571,31 @@ namespace JSON
 			return *this;
 		}
 		Writer &kv(KeyRef k, float v) { return kv(k, (double)v); }
-		Writer &kv(KeyRef k, const char *s, size_t n)
+		Writer &kv(KeyRef k, StringRef v)
 		{
-			reserve_more(k.n + 4 + 1 + n * 6 + 2); // key + sep + escaped value
+			reserve_more(k.n + 4 + 1 + v.n * 6 + 2); // key + sep + escaped value
 			put_sep_raw();
 			put_kvkey_raw(k.p, k.n);
-			put_string_escaped_raw(s, n);
+			put_string_escaped_raw(v.p, v.n);
 			need_sep = true;
 			return *this;
 		}
 		// Two-piece string value, no temporary allocation. Both pieces are
 		// escaped into the same "..." literal.
-		Writer &kv(KeyRef k, const char *s1, size_t n1, const char *s2, size_t n2)
+		Writer &kv(KeyRef k, StringRef s1, StringRef s2)
 		{
-			reserve_more(k.n + 4 + 1 + (n1 + n2) * 6 + 2);
+			reserve_more(k.n + 4 + 1 + (s1.n + s2.n) * 6 + 2);
 			put_sep_raw();
 			put_kvkey_raw(k.p, k.n);
 			*ptr++ = '"';
-			put_string_escaped_body_raw(s1, n1);
-			put_string_escaped_body_raw(s2, n2);
+			put_string_escaped_body_raw(s1.p, s1.n);
+			put_string_escaped_body_raw(s2.p, s2.n);
 			*ptr++ = '"';
 			need_sep = true;
 			return *this;
 		}
-		// Fixed-size null-terminated buffer overloads — see val() above.
-		template <size_t N>
-		Writer &kv(KeyRef k, const char (&s)[N])
-		{
-			return kv(k, s, strnlen(s, N - 1));
-		}
-		template <size_t N>
-		Writer &kv(KeyRef k, const char (&s)[N], const char *suffix, size_t suffix_n)
-		{
-			return kv(k, s, strnlen(s, N - 1), suffix, suffix_n);
-		}
-		Writer &kv(KeyRef k, const std::string &v)
-		{
-			return kv(k, v.data(), v.size());
-		}
-		Writer &kv(KeyRef k, bool v)
+		template <typename B, typename = typename std::enable_if<std::is_same<B, bool>::value>::type>
+		Writer &kv(KeyRef k, B v)
 		{
 			reserve_more(k.n + 9); // sep + key + "false"
 			put_sep_raw();
@@ -697,11 +690,8 @@ namespace JSON
 			switch (v.getType())
 			{
 			case Value::Type::STRING:
-			{
-				const std::string &s = v.getStringRef();
-				w.val(s.data(), s.size());
+				w.val(v.getStringRef());
 				break;
-			}
 			case Value::Type::INT:
 				w.val((long long)v.getInt());
 				break;
@@ -719,7 +709,7 @@ namespace JSON
 				const std::vector<std::string> &as = v.getStringArray();
 				w.beginArray();
 				for (const std::string &s : as)
-					w.val(s.data(), s.size());
+					w.val(s);
 				w.endArray();
 				break;
 			}
