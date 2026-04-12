@@ -51,17 +51,19 @@ namespace AIS
 		return 0;
 	}
 
-	void NMEA::initMsg(char channel, int src)
+	void NMEA::initMsg(char channel, int src, int64_t rxtime_us, int64_t toa, long start_idx, long end_idx)
 	{
 		msg.clear();
 
-		if (cfg_stamp || mctx.rxtime == 0)
+		if (cfg_stamp || rxtime_us == 0)
 			msg.Stamp();
 		else
-			msg.setRxTimeMicros(mctx.rxtime);
+			msg.setRxTimeMicros(rxtime_us);
 
-		msg.setTOA(mctx.toa);
+		msg.setTOA(toa);
 		msg.setOrigin(channel, src, own_mmsi);
+		msg.setStartIdx(start_idx);
+		msg.setEndIdx(end_idx);
 	}
 
 	void NMEA::assembleAIS(TAG &tag)
@@ -85,7 +87,7 @@ namespace AIS
 			return;
 
 		// All parts collected — assemble and send
-		initMsg(aivdm.channel(), src);
+		initMsg(aivdm.channel(), src, mctx.rxtime, mctx.toa);
 
 		msg.beginNMEA();
 		for (auto &it : queue)
@@ -438,9 +440,7 @@ namespace AIS
 		{
 			tag.error = message_error;
 
-			initMsg(channel_ch, src);
-			msg.setStartIdx(mctx.ssc);
-			msg.setEndIdx(mctx.ssc + mctx.sl);
+			initMsg(channel_ch, src, mctx.rxtime, mctx.toa, mctx.ssc, mctx.ssc + mctx.sl);
 			msg.appendPayload(q, (int)(payload_end - q));
 			msg.reduceLength(fillbits);
 
@@ -592,11 +592,11 @@ namespace AIS
 						nmea_array = &p.Get();
 					break;
 				case AIS::KEY_LAT:
-					tpv_lat = p.Get().isFloat() ? p.Get().getFloat() : (p.Get().isInt() ? (float)p.Get().getInt() : 0);
+					tpv_lat = p.Get().isFloat() ? p.Get().getFloat() : (p.Get().isInt() ? (float)p.Get().getInt() : 0.0f);
 					has_tpv_coords = true;
 					break;
 				case AIS::KEY_LON:
-					tpv_lon = p.Get().isFloat() ? p.Get().getFloat() : (p.Get().isInt() ? (float)p.Get().getInt() : 0);
+					tpv_lon = p.Get().isFloat() ? p.Get().getFloat() : (p.Get().isInt() ? (float)p.Get().getInt() : 0.0f);
 					has_tpv_coords = true;
 					break;
 				}
@@ -745,11 +745,7 @@ namespace AIS
 			return false;
 		}
 
-		msg.clear();
-		msg.setRxTimeUnix(timestamp);
-		msg.setOrigin(ch, station, own_mmsi);
-		msg.setStartIdx(0);
-		msg.setEndIdx(0);
+		initMsg(ch, station, (int64_t)timestamp * 1000000);
 
 		for (int i = 0; i < (length_bits + 7) / 8; i++)
 		{
