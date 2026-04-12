@@ -335,7 +335,7 @@ install_librtlsdr_from_source() {
     cd rtl-sdr || error_exit "Failed to change directory to rtl-sdr"
     mkdir build && cd build || error_exit "Failed to create and enter build directory"
     cmake ../ -DCMAKE_INSTALL_PREFIX="${LIB_DIR}" -DDETACH_KERNEL_DRIVER=ON -DINSTALL_UDEV_RULES=ON || error_exit "Failed to run cmake"
-    make || error_exit "Failed to build rtl-sdr"
+    make -j"$(nproc)" || error_exit "Failed to build rtl-sdr"
     make install || error_exit "Failed to install rtl-sdr"
     # ldconfig not needed: libraries are in a custom prefix and the RPATH in the AIS-catcher
     # binary points directly to ${LIB_DIR}/lib, so the dynamic linker finds them without it.
@@ -349,7 +349,7 @@ install_libhydrasdr_from_source() {
     cd rfone_host/libhydrasdr || error_exit "Failed to change directory to rfone_host/libhydrasdr"
     mkdir build && cd build || error_exit "Failed to create and enter build directory"
     cmake .. -DCMAKE_INSTALL_PREFIX="${LIB_DIR}" -DINSTALL_UDEV_RULES=ON || error_exit "Failed to run cmake"
-    make || error_exit "Failed to build libhydrasdr"
+    make -j"$(nproc)" || error_exit "Failed to build libhydrasdr"
     make install || error_exit "Failed to install libhydrasdr"
     cd ../../.. || error_exit "Failed to return to parent directory"
 }
@@ -399,7 +399,7 @@ build_ais_catcher_from_source() {
              -DCMAKE_BUILD_RPATH="${LIB_DIR}/lib;${LIB_DIR}" \
              -DNMEA2000_INCLUDE="${TMP_DIR}/NMEA2000/src" \
              -DNMEA2000_LIB="${TMP_DIR}/NMEA2000/src/libnmea2000.a" || error_exit "Failed to run cmake"
-    make || error_exit "Failed to build AIS-catcher"
+    make -j"$(nproc)" || error_exit "Failed to build AIS-catcher"
     
     cd ../..
     install -m 755 AIS-catcher/build/AIS-catcher /usr/bin/AIS-catcher || error_exit "Failed to install AIS-catcher executable"
