@@ -87,6 +87,7 @@ namespace AIS
 		// All parts collected — assemble and send
 		initMsg(aivdm.channel(), src);
 
+		msg.beginNMEA();
 		for (auto &it : queue)
 		{
 			if (matches(aivdm, it))
@@ -94,7 +95,7 @@ namespace AIS
 				tag.error |= it.message_error;
 				addline(it);
 				if (!cfg_regenerate)
-					msg.NMEA.push_back(it.sentence);
+					msg.pushNMEA(it.sentence);
 			}
 		}
 
@@ -448,7 +449,10 @@ namespace AIS
 				if (cfg_regenerate)
 					msg.buildNMEA(tag);
 				else
-					msg.NMEA.push_back(str);
+				{
+					msg.beginNMEA();
+					msg.pushNMEA(str);
+				}
 				Send(&msg, 1, tag);
 			}
 			else if (shouldWarn(WARN_INVALID_MSG))

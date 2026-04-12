@@ -210,7 +210,7 @@ void SSEStreamer::Receive(const JSON::JSON *data, int len, TAG &tag)
 		std::time_t now = std::time(nullptr);
 		char channel = m->getChannel();
 
-		if (!m->NMEA.empty())
+		if (!m->sentences().empty())
 		{
 			std::string json;
 			JSON::Writer w(json);
@@ -222,7 +222,7 @@ void SSEStreamer::Receive(const JSON::JSON *data, int len, TAG &tag)
 				.kv("shipname", tag.shipname)
 				.key("nmea").beginArray();
 
-			for (const auto &s : m->NMEA)
+			for (const auto &s : m->sentences())
 			{
 				std::string nmea = s;
 

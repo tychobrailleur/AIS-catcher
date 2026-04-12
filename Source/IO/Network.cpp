@@ -79,10 +79,10 @@ namespace IO
 			{
 				if (protocol == PROTOCOL::NMEA)
 				{
-					const std::vector<std::string> &nmea = ((AIS::Message *)data[i].binary)->NMEA;
+					auto nmea = ((AIS::Message *)data[i].binary)->sentences();
 					const std::lock_guard<std::mutex> lock(msg_list_mutex);
 
-					for (int j = 0; j < nmea.size(); j++)
+					for (size_t j = 0; j < nmea.size(); j++)
 					{
 						msg_list.push_back(nmea[j]);
 					}

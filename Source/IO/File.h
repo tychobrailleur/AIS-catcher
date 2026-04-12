@@ -66,7 +66,7 @@ namespace IO
 					if (!filter.include(data[i]))
 						continue;
 
-					for (const auto &s : data[i].NMEA)
+					for (const auto &s : data[i].sentences())
 					{
 						file << s << std::endl;
 					}

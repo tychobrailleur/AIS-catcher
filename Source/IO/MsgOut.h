@@ -54,7 +54,7 @@ namespace IO
 			switch (fmt)
 			{
 			case MessageFormat::NMEA:
-				for (const auto &s : msg.NMEA)
+				for (const auto &s : msg.sentences())
 				{
 					json += s;
 					json += suffix;

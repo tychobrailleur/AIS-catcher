@@ -60,7 +60,6 @@ namespace AIS
 	protected:
 		const int MAX_NMEA_CHARS = 56;
 		static int ID;
-		std::string line = "!AIVDM,X,X,X,X," + std::string(MAX_NMEA_CHARS, '.') + ",X*XX\n\r"; // longest line
 
 		uint8_t data[MAX_AIS_BYTES + 1];
 		int64_t rxtime; // microseconds since epoch
@@ -71,8 +70,39 @@ namespace AIS
 		int station;
 		int own_mmsi = -1;
 
-	public:
 		std::vector<std::string> NMEA;
+		size_t nmea_count = 0;
+
+	public:
+		struct NMEAView
+		{
+			const std::string *p;
+			size_t n;
+			const std::string *begin() const { return p; }
+			const std::string *end() const { return p + n; }
+			size_t size() const { return n; }
+			bool empty() const { return n == 0; }
+			const std::string &operator[](size_t i) const { return p[i]; }
+		};
+		NMEAView sentences() const { return {NMEA.data(), nmea_count}; }
+
+		void beginNMEA() { nmea_count = 0; }
+
+		void pushNMEA(const char *data, size_t len)
+		{
+			if (nmea_count < NMEA.size())
+			{
+				NMEA[nmea_count].assign(data, len);
+			}
+			else
+			{
+				NMEA.emplace_back();
+				NMEA.back().reserve(128);
+				NMEA.back().assign(data, len);
+			}
+			++nmea_count;
+		}
+		void pushNMEA(const std::string &s) { pushNMEA(s.data(), s.size()); }
 
 		void Stamp()
 		{
@@ -135,7 +165,7 @@ namespace AIS
 		{
 			length = 0;
 			toa = 0;
-			NMEA.resize(0);
+			nmea_count = 0;
 			std::memset(data, 0, 128);
 		}
 
@@ -187,6 +217,7 @@ namespace AIS
 		void setLetter(int pos, char c);
 		void appendLetter(char c) { setLetter(length / 6, c); }
 		void appendPayload(const char *src, int count);
+		void getPayload(char *dst, int pos, int count) const;
 		void reduceLength(int l) { length = MAX(length - l, 0); }
 
 		void setLength(int l)

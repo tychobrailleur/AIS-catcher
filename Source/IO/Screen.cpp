@@ -56,7 +56,7 @@ namespace IO
 				switch (fmt)
 				{
 				case MessageFormat::NMEA:
-					for (const auto &s : data[i].NMEA)
+					for (const auto &s : data[i].sentences())
 						std::cout << s << '\n';
 					break;
 				case MessageFormat::NMEA_TAG:
@@ -67,7 +67,7 @@ namespace IO
 					break;
 				}
 				case MessageFormat::FULL:
-					for (const auto &s : data[i].NMEA)
+					for (const auto &s : data[i].sentences())
 					{
 
 						std::cout << s << " ( ";

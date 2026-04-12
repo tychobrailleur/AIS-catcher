@@ -939,7 +939,17 @@ namespace AIS
 			json.Add(AIS::KEY_ERROR, (int)tag.error);
 
 		json.Add(AIS::KEY_CHANNEL, &channel);
-		json.Add(AIS::KEY_NMEA, &msg.NMEA);
+
+		nmea_values.clear();
+		for (const auto &s : msg.sentences())
+		{
+			JSON::Value v;
+			v.setString(const_cast<std::string *>(&s));
+			nmea_values.push_back(v);
+		}
+		JSON::Value arr;
+		arr.setArray(&nmea_values);
+		json.Add(AIS::KEY_NMEA, arr);
 
 		if (tag.mode & 1)
 		{

@@ -165,12 +165,13 @@ namespace AIS
 		}
 
 		w.append_lit(",\"nmea\":[");
-		for (int i = 0; i < (int)NMEA.size(); i++)
+		NMEAView s = sentences();
+		for (size_t i = 0; i < s.size(); i++)
 		{
 			if (i > 0)
 				w.append(',');
 			w.append('"');
-			w.append(NMEA[i].data(), NMEA[i].size());
+			w.append(s[i].data(), s[i].size());
 			w.append('"');
 		}
 		w.append_lit("]}");
@@ -184,7 +185,7 @@ namespace AIS
 	{
 		static int groupId = 0;
 
-		int total = NMEA.size();
+		int total = sentences().size();
 		int seq = 1;
 
 		if (total > 1)
@@ -216,7 +217,7 @@ namespace AIS
 			srcLen = sp - src;
 		}
 
-		for (const auto &nmea : NMEA)
+		for (const auto &nmea : sentences())
 		{
 			w.append('\\');
 			size_t cs_off = w.written(); // checksum starts after backslash
@@ -506,11 +507,9 @@ namespace AIS
 
 	void Message::buildNMEA(TAG &tag, int id)
 	{
-		const char comma = ',';
-
+		const int IDX_OWN_MMSI = 5;
 		const int IDX_COUNT = 7;
 		const int IDX_NUMBER = 9;
-		const int IDX_OWN_MMSI = 5;
 
 		if (id >= 0 && id < 10)
 			ID = id;
@@ -518,45 +517,66 @@ namespace AIS
 		int nAISletters = (length + 6 - 1) / 6;
 		int nSentences = (nAISletters == 0) ? 1 : (nAISletters + MAX_NMEA_CHARS - 1) / MAX_NMEA_CHARS;
 
-		line.resize(11);
-
-		line[IDX_OWN_MMSI] = own_mmsi == mmsi() ? 'O' : 'M';
-		line[IDX_COUNT] = (char)(nSentences + '0');
-		line[IDX_NUMBER] = '0';
-
-		if (nSentences > 1)
+		while ((int)NMEA.size() < nSentences)
 		{
-			line += (char)(ID + '0');
-			ID = (ID + 1) % 10;
+			NMEA.emplace_back();
+			NMEA.back().reserve(128);
 		}
 
-		line += comma;
-		if (channel != '?')
-			line += channel;
-		line += comma;
-
-		int header = line.length();
-		NMEA.clear();
+		static constexpr char hex[] = "0123456789ABCDEF";
+		const char own = own_mmsi == mmsi() ? 'O' : 'M';
+		const char count = (char)(nSentences + '0');
+		const char seq = (nSentences > 1) ? (char)(ID + '0') : 0;
+		if (nSentences > 1)
+			ID = (ID + 1) % 10;
 
 		for (int s = 0, l = 0; s < nSentences; s++)
 		{
+			std::string &out = NMEA[s];
+			out.resize(128);
+			char *p = &out[0];
 
-			line.resize(header);
-			line[IDX_NUMBER]++;
+			std::memcpy(p, "!AIVDM,X,X,X,X,", 11);
+			p[IDX_OWN_MMSI] = own;
+			p[IDX_COUNT] = count;
+			p[IDX_NUMBER] = (char)(s + 1 + '0');
 
-			for (int i = 0; l < nAISletters && i < MAX_NMEA_CHARS; i++, l++)
-				line += getLetter(l);
+			int i = 11;
+			if (seq)
+				p[i++] = seq;
+			p[i++] = ',';
+			if (channel != '?')
+				p[i++] = channel;
+			p[i++] = ',';
 
-			line += comma;
-			line += (char)(((s == nSentences - 1) ? nAISletters * 6 - length : 0) + '0');
+			int letters = MIN(nAISletters - l, MAX_NMEA_CHARS);
+			getPayload(p + i, l, letters);
+			i += letters;
+			l += letters;
 
-			int c = NMEAchecksum(line);
-			line += '*';
-			line += (c >> 4) < 10 ? (c >> 4) + '0' : (c >> 4) + 'A' - 10;
-			line += (c & 0xF) < 10 ? (c & 0xF) + '0' : (c & 0xF) + 'A' - 10;
-			NMEA.push_back(line);
+			p[i++] = ',';
+			p[i++] = (char)(((s == nSentences - 1) ? nAISletters * 6 - length : 0) + '0');
+
+			int c = 0;
+			for (int k = 1; k < i; k++)
+				c ^= (unsigned char)p[k];
+
+			p[i++] = '*';
+			p[i++] = hex[(c >> 4) & 0xF];
+			p[i++] = hex[c & 0xF];
+
+			out.resize(i);
 		}
+		nmea_count = nSentences;
 	}
+
+	// AIS armoring: v<40 ? v+48 : v+56  →  '0'..'W' and '`'..'w'
+	static constexpr char sixbit[64] = {
+		'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ':', ';', '<', '=', '>', '?',
+		'@', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O',
+		'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', '`', 'a', 'b', 'c', 'd', 'e', 'f', 'g',
+		'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w'
+	};
 
 	char Message::getLetter(int pos) const
 	{
@@ -569,19 +589,43 @@ namespace AIS
 		int x = start >> 3, y = start & 7;
 		uint16_t w = (data[x] << 8) | data[x + 1];
 
-		const int mask = (1 << 6) - 1;
-		int l = (w >> (16 - 6 - y)) & mask;
+		int l = (w >> (16 - 6 - y)) & 0x3F;
 
 		// zero for bits not formally set
 		int overrun = end - length;
 
 		if (overrun > 0)
-			l &= 0xFF << overrun;
+			l &= 0x3F << overrun;
 
-		return l < 40 ? (char)(l + 48) : (char)(l + 56);
+		return sixbit[l];
 	}
 
-	static const uint8_t nmea_decode[256] = {
+	void Message::getPayload(char *dst, int pos, int count) const
+	{
+		int k = 0;
+		// Fast path: byte-aligned bit offset → 3 bytes decode to 4 letters.
+		// Reserve the final letter for the scalar tail so overrun masking stays correct.
+		if ((pos & 3) == 0)
+		{
+			int x = (pos * 6) >> 3;
+			while (k + 4 < count && x + 3 <= MAX_AIS_BYTES)
+			{
+				uint8_t b0 = data[x];
+				uint8_t b1 = data[x + 1];
+				uint8_t b2 = data[x + 2];
+				dst[k + 0] = sixbit[b0 >> 2];
+				dst[k + 1] = sixbit[((b0 & 0x3) << 4) | (b1 >> 4)];
+				dst[k + 2] = sixbit[((b1 & 0xF) << 2) | (b2 >> 6)];
+				dst[k + 3] = sixbit[b2 & 0x3F];
+				k += 4;
+				x += 3;
+			}
+		}
+		for (; k < count; k++)
+			dst[k] = getLetter(pos + k);
+	}
+
+	static constexpr uint8_t nmea_decode[256] = {
 		// indices 0-47: unused (control chars, space, punctuation before '0')
 		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,

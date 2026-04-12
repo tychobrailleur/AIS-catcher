@@ -27,6 +27,7 @@
 namespace AIS {
 	class JSONAIS : public SimpleStreamInOut<Message, JSON::JSON> {
 		JSON::JSON json;
+		std::vector<JSON::Value> nmea_values;
 
 		void ProcessMsg(const AIS::Message& msg, TAG& tag);
 

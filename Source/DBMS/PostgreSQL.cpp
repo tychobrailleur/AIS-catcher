@@ -481,7 +481,7 @@ namespace IO
 
 		if (NMEA)
 		{
-			for (const auto &s : msg.NMEA)
+			for (const auto &s : msg.sentences())
 				entry.nmea_lines.push_back(s);
 		}
 
