@@ -27,6 +27,7 @@
 #include "Common.h"
 #include "JSON.h"
 #include "Keys.h"
+#include "../Library/SWAR.h"
 
 namespace JSON
 {
@@ -92,6 +93,9 @@ namespace JSON
 		char *ptr;
 		char *end;
 		bool need_sep = false;
+		// Scratch for put_uint_raw / put_int_raw. Member (not local) so the
+		// function's frame has no stack array — eliminates the canary check.
+		char int_tmp[20];
 
 		// Grow the backing string, preserving the write offset.
 		void grow(size_t extra)
@@ -139,8 +143,7 @@ namespace JSON
 		// Up to 20 decimal digits. Caller must have reserved >= 20.
 		inline void put_uint_raw(unsigned long long v)
 		{
-			char tmp[20];
-			char *const end_tmp = tmp + 20;
+			char *const end_tmp = int_tmp + 20;
 			char *p = end_tmp;
 			while (v >= 100)
 			{
@@ -260,8 +263,18 @@ namespace JSON
 			const char *sEnd = s + len;
 			const char *start = s;
 
+			constexpr size_t m_quote = SWAR::mask('"');
+			constexpr size_t m_bslash = SWAR::mask('\\');
+
 			while (s < sEnd)
 			{
+				// Fast-scan the next run of safe bytes (>= 0x20, not '"' or '\\').
+				SWAR_SKIP_PTR(s, sEnd,
+					SWAR::has_byte(word, m_quote)
+					| SWAR::has_byte(word, m_bslash)
+					| SWAR::has_byte_lt(word, 0x20));
+				if (s >= sEnd) break;
+
 				unsigned char c = (unsigned char)*s;
 				if (c >= 0x20 && c != '"' && c != '\\')
 				{

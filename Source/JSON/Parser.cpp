@@ -31,8 +31,6 @@
 
 namespace JSON
 {
-	KeyHashTable Parser::keyLookup;
-
 	// Generated from KeyDefs.h — one branch per X() entry whose input dict
 	// field is non-empty. The `sizeof(input) > 1` guard lets the compiler
 	// dead-code-eliminate the ~470 empty-input branches at compile time.
@@ -165,7 +163,7 @@ namespace JSON
 			SWAR_SKIP_PTR(p, pend,
 				SWAR::has_byte(word, m_quote)
 				| SWAR::has_byte(word, m_bslash)
-				| SWAR::has_byte_lt(word, 0x20))
+				| SWAR::has_byte_lt(word, 0x20));
 			while (p < pend && *p != '\"' && *p != '\\' && (unsigned char)*p >= 0x20)
 				p++;
 
@@ -346,7 +344,7 @@ namespace JSON
 		tokenEscaped = false;
 
 		constexpr size_t m_quote = SWAR::mask('"');
-		SWAR_SKIP_PTR(p, pend, SWAR::has_byte(word, m_quote))
+		SWAR_SKIP_PTR(p, pend, SWAR::has_byte(word, m_quote));
 		while (p < pend && *p != '\"')
 			p++;
 

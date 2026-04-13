@@ -1020,8 +1020,6 @@ static void parseCLI(int argc, char *argv[], RunState &state, Config &c, int &cb
 
 int main(int argc, char *argv[])
 {
-	JSON::Parser::buildKeyLookup();
-
 	RunState state;
 	Config c(state);
 	int cb = -1;

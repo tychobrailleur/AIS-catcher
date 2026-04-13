@@ -317,7 +317,7 @@ namespace AIS
 			warnAIS(WARN_AIS_TALKER, "invalid talker ID", str);
 			return false;
 		}
-		
+
 		if (p[6] != ',' || p[8] != ',' || p[10] != ',' || p[7] < '1' || p[7] > '9' || p[9] < '1' || p[9] > '9')
 		{
 			warnAIS(WARN_AIS_HEADER, "malformed header", str);
@@ -976,7 +976,7 @@ namespace AIS
 		int start = pos;
 
 		// NMEA sentences and tag blocks contain no whitespace; break on any byte <= ' '.
-		SWAR_SKIP_AT(buf, pos, limit, SWAR::has_byte_lt(word, 0x21))
+		SWAR_SKIP_AT(buf, pos, limit, SWAR::has_byte_lt(word, 0x21));
 		while (pos < limit && (unsigned char)buf[pos] > ' ')
 			pos++;
 
@@ -1027,9 +1027,7 @@ namespace AIS
 		int start = pos;
 
 		SWAR_SKIP_AT(buf, pos, limit,
-			SWAR::has_byte(word, SWAR::mask('{'))
-			| SWAR::has_byte(word, SWAR::mask('}'))
-			| SWAR::has_byte_lt(word, 0x20))
+					 SWAR::has_byte(word, SWAR::mask('{')) | SWAR::has_byte(word, SWAR::mask('}')) | SWAR::has_byte_lt(word, 0x20));
 
 		while (pos < limit)
 		{
@@ -1073,7 +1071,7 @@ namespace AIS
 		int limit = MIN(bufsize, pos + (int)(MAX_BINARY_LINE + 1 - line.size()));
 		int start = pos;
 
-		SWAR_SKIP_AT(buf, pos, limit, SWAR::has_byte(word, SWAR::mask('\n')))
+		SWAR_SKIP_AT(buf, pos, limit, SWAR::has_byte(word, SWAR::mask('\n')));
 
 		while (pos < limit)
 		{

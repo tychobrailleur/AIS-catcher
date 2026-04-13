@@ -28,35 +28,6 @@
 
 namespace JSON
 {
-	// Direct-mapped hash table for INPUT key lookup.
-	// 71 slots chosen so FNV-1a hash % 71 gives zero collisions for the 18 input keys.
-	struct KeyHashTable
-	{
-		static const int SIZE = 71;
-		int16_t slots[SIZE]; // Keys enum value, or -1 if empty
-		bool built = false;
-
-		void insert(uint32_t h, int value)
-		{
-			int idx = (int)(h % SIZE);
-			if (slots[idx] != -1)
-				throw std::runtime_error("JSON Parser: hash collision in key lookup table");
-			slots[idx] = (int16_t)value;
-		}
-
-		int find(uint32_t h, const char *str, int len) const
-		{
-			int v = slots[(int)(h % SIZE)];
-			if (v >= 0)
-			{
-				const std::string &k = AIS::KeyMap[v][JSON_DICT_INPUT];
-				if ((int)k.size() != len || memcmp(k.data(), str, len) != 0)
-					return -1;
-			}
-			return v;
-		}
-	};
-
 	class Parser
 	{
 	private:
@@ -90,14 +61,6 @@ namespace JSON
 		bool tokenEscaped = false;
 		std::string escapedText;
 
-		static uint32_t hashRange(const char *data, int len)
-		{
-			uint32_t h = 2166136261u;
-			for (int i = 0; i < len; i++)
-				h = (h ^ (unsigned char)data[i]) * 16777619u;
-			return h;
-		}
-
 		[[noreturn]] void error(const std::string &err, int pos);
 		[[noreturn]] __attribute__((noinline, cold)) void error(const char *err, int pos);
 
@@ -125,27 +88,7 @@ namespace JSON
 		Value parse_value(Pool *pool);
 		void skip_value();
 
-		static KeyHashTable keyLookup; // INPUT only
-
 	public:
-		static void buildKeyLookup()
-		{
-			if (keyLookup.built)
-				return;
-
-			for (int i = 0; i < KeyHashTable::SIZE; i++)
-				keyLookup.slots[i] = -1;
-
-			for (int i = 0; i < AIS::KEY_COUNT; i++)
-			{
-				const std::string &key = AIS::KeyMap[i][JSON_DICT_INPUT];
-				if (!key.empty())
-					keyLookup.insert(hashRange(key.data(), key.size()), i);
-			}
-
-			keyLookup.built = true;
-		}
-
 		int linearSearch() const
 		{
 			const char *str = tokenEscaped ? escapedText.data() : tokenStart;
