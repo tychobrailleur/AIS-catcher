@@ -26,6 +26,14 @@
 #include "JSON.h"
 #include "Keys.h"
 
+#if defined(__GNUC__) || defined(__clang__)
+#define AISC_COLD_NOINLINE __attribute__((noinline, cold))
+#elif defined(_MSC_VER)
+#define AISC_COLD_NOINLINE __declspec(noinline)
+#else
+#define AISC_COLD_NOINLINE
+#endif
+
 namespace JSON
 {
 	class Parser
@@ -62,7 +70,7 @@ namespace JSON
 		std::string escapedText;
 
 		[[noreturn]] void error(const std::string &err, int pos);
-		[[noreturn]] __attribute__((noinline, cold)) void error(const char *err, int pos);
+		[[noreturn]] AISC_COLD_NOINLINE void error(const char *err, int pos);
 
 		// tokenizer
 		void skip_whitespace()
@@ -72,7 +80,7 @@ namespace JSON
 		}
 		void next();
 		void next_key();
-		__attribute__((noinline, cold)) void parse_string_escaped();
+		AISC_COLD_NOINLINE void parse_string_escaped();
 
 		// parser
 		[[noreturn]] void error_parser(const std::string &err);

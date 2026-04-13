@@ -22,6 +22,14 @@
 #include "SWAR.h"
 #include <cmath>
 
+#if defined(__GNUC__) || defined(__clang__)
+#define AISC_COLD_NOINLINE __attribute__((noinline, cold))
+#elif defined(_MSC_VER)
+#define AISC_COLD_NOINLINE __declspec(noinline)
+#else
+#define AISC_COLD_NOINLINE
+#endif
+
 namespace AIS
 {
 
@@ -1008,13 +1016,13 @@ namespace AIS
 		}
 	}
 
-	__attribute__((noinline, cold)) void NMEA::warnAIS(int bit, const char *msg, const std::string &ctx)
+	AISC_COLD_NOINLINE void NMEA::warnAIS(int bit, const char *msg, const std::string &ctx)
 	{
 		if (shouldWarn(bit))
 			Warning() << "AIS: " << msg << " [" << ctx.substr(0, 20) << "...]";
 	}
 
-	__attribute__((noinline, cold)) void NMEA::warnJSONControlChar()
+	AISC_COLD_NOINLINE void NMEA::warnJSONControlChar()
 	{
 		if (shouldWarn(WARN_JSON_NEWLINE))
 			Warning() << "NMEA: newline in uncompleted JSON input";
