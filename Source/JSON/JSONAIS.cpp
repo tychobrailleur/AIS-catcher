@@ -171,7 +171,6 @@ namespace AIS
 	void JSONAIS::T(const AIS::Message &msg, int p, int start, int len, std::string &str)
 	{
 		msg.getText(start, len, str);
-		str.erase(str.find_last_not_of(' ') + 1);
 		json.Add(p, &str);
 	}
 

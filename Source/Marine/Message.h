@@ -61,7 +61,7 @@ namespace AIS
 		const int MAX_NMEA_CHARS = 56;
 		static int ID;
 
-		uint8_t data[MAX_AIS_BYTES + 1];
+		uint8_t data[MAX_AIS_BYTES + 4]; // +4 padding so 5-byte reads in getText/getUint never go out of bounds
 		int64_t rxtime; // microseconds since epoch
 		int64_t toa; // time of arrival in seconds since epoch
 		int length;

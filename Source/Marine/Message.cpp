@@ -19,6 +19,7 @@
 #include "Parse.h"
 #include "Helper.h"
 #include "JSON/StringBuilder.h"
+#include "Library/SWAR.h"
 
 namespace AIS
 {
@@ -357,34 +358,26 @@ namespace AIS
 
 	unsigned Message::getUint(int start, int len) const
 	{
-		if (start + len > MAX_AIS_LENGTH || start < 0)
+		if (start < 0 || start + len > MAX_AIS_LENGTH)
 			return 0;
 
-		// we start 2nd part of first byte and stop first part of last byte
-		int x = start >> 3, y = start & 7;
-		unsigned u = data[x] & (0xFF >> y);
-		int remaining = len - 8 + y;
+		// Branchless: 5-byte big-endian load covers any len<=32 with y<=7 (max 39 bits).
+		// data[] has +4 padding so data[x+4] is always in-bounds here.
+		const int x = start >> 3;
+		const int y = start & 7;
 
-		// first byte is last byte
-		if (remaining <= 0)
-		{
-			return u >> (-remaining);
-		}
-		// add full bytes
-		while (remaining >= 8)
-		{
-			u <<= 8;
-			u |= data[++x];
-			remaining -= 8;
-		}
-		// make room for last bits if needed
-		if (remaining > 0)
-		{
-			u <<= remaining;
-			u |= data[++x] >> (8 - remaining);
-		}
+		uint32_t hi;
+		std::memcpy(&hi, data + x, 4);
+#if defined(__GNUC__) || defined(__clang__)
+		hi = __builtin_bswap32(hi);
+#else
+		hi = ((hi & 0xFFu) << 24) | ((hi & 0xFF00u) << 8) | ((hi & 0xFF0000u) >> 8) | ((hi & 0xFF000000u) >> 24);
+#endif
+		const uint64_t w = ((uint64_t)hi << 8) | (uint64_t)data[x + 4]; // bottom 40 bits = 5 source bytes BE
 
-		return u;
+		const unsigned shift = 40u - (unsigned)y - (unsigned)len;
+		const uint32_t mask = (len >= 32) ? 0xFFFFFFFFu : ((1u << len) - 1u);
+		return (unsigned)((w >> shift) & mask);
 	}
 
 	bool Message::setUint(int start, int len, unsigned val)
@@ -443,29 +436,75 @@ namespace AIS
 
 	void Message::getText(int start, int len, std::string &str) const
 	{
-		const int end = start + len;
-		str.clear();
-
-		if (end >= MAX_AIS_LENGTH || start < 0)
-			return;
-
-		while (start < end)
+		if (start < 0 || start + len > MAX_AIS_LENGTH)
 		{
-			int c = getUint(start, 6);
-
-			// 0       ->   @ and ends the string
-			// 1 - 31  ->   65+ ( i.e. setting bit 6 )
-			// 32 - 63 ->   32+ ( i.e. doing nothing )
-
-			if (!c)
-				break;
-			if (!(c & 32))
-				c |= 64;
-
-			str += (char)c;
-			start += 6;
+			str.resize(0);
+			return;
 		}
-		return;
+
+		// SWAR: extract sizeof(size_t) six-bit chars per iteration.
+		// 32-bit: 4 chars (24 bits, 3-byte step). 64-bit: 8 chars (48 bits, 6-byte step).
+		constexpr int CHARS_PER = (int)sizeof(size_t);
+		constexpr int STEP_BYTES = CHARS_PER * 6 / 8;
+		constexpr int WORD_BITS = CHARS_PER * 8;
+
+		const int nchars = (len + 5) / 6;
+		str.resize(nchars);
+		char *p = &str[0];
+		int n = 0, last_nonspace = 0;
+
+		int x = start >> 3;
+		const int y = start & 7;
+		int remaining = nchars;
+
+		while (remaining >= CHARS_PER && x + CHARS_PER <= MAX_AIS_BYTES)
+		{
+			// Big-endian load; compiler folds to a single unaligned ldr+rev / bswap.
+			size_t u = 0;
+			for (int i = 0; i < CHARS_PER; ++i)
+				u = (u << 8) | data[x + i];
+
+			// Pack CHARS_PER 6-bit fields into one byte each, MSB-first.
+			size_t packed = 0;
+			for (int i = 0; i < CHARS_PER; ++i)
+			{
+				const int sh = WORD_BITS - 6 - y - 6 * i;
+				packed |= ((u >> sh) & 0x3F) << (8 * (CHARS_PER - 1 - i));
+			}
+
+			// 6->8 bit AIS ASCII transform: c |= (~c & 0x20) << 1.
+			packed |= (~packed & SWAR::mask(0x20)) << 1;
+
+			// Terminator: original 0 -> '@' after transform.
+			if (SWAR::has_byte(packed, SWAR::mask(0x40)))
+				break;
+
+			for (int i = 0; i < CHARS_PER; ++i)
+				p[n + i] = char(packed >> (8 * (CHARS_PER - 1 - i)));
+
+			// Last non-space byte: XOR with space mask, find lowest nonzero byte
+			// (= highest char index in this word since bytes are MSB-first).
+			size_t nsm = packed ^ SWAR::mask(' ');
+			if (nsm) last_nonspace = n + CHARS_PER - SWAR::first_byte(nsm);
+
+			n += CHARS_PER;
+			x += STEP_BYTES;
+			remaining -= CHARS_PER;
+		}
+
+		int bitpos = x * 8 + y;
+		while (remaining-- > 0)
+		{
+			unsigned w = (unsigned(data[bitpos >> 3]) << 8) | data[(bitpos >> 3) + 1];
+			unsigned c = (w >> (10 - (bitpos & 7))) & 0x3F;
+			if (!c) break;
+			if (!(c & 32)) c |= 64;
+			p[n++] = char(c);
+			if (c != ' ') last_nonspace = n;
+			bitpos += 6;
+		}
+
+		str.resize(last_nonspace);
 	}
 
 	void Message::setText(int start, int len, const char *str)
