@@ -371,10 +371,9 @@ static void run(RunState &state)
 
 	if (state.receivers.size() > 1)
 	{
-		Debug() << "Mutex: enabling exclusive on " << state.msg.size() << " message outputs + screen (" << state.receivers.size() << " receivers)";
+		Debug() << "Mutex: enabling exclusive on " << state.msg.size() << " message outputs (" << state.receivers.size() << " receivers); screen uses thread-local buffers";
 		for (auto &o : state.msg)
 			o->setExclusive(true);
-		state.screen.setExclusive(true);
 	}
 	else
 	{

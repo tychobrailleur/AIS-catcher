@@ -24,93 +24,108 @@ namespace IO
 		if (fmt == MessageFormat::SILENT)
 			return;
 
+		thread_local std::string buf;
 		for (int i = 0; i < len; i++)
 		{
-			if (filter.includeGPS())
+			if (!filter.includeGPS())
+				continue;
+			buf.clear();
+			switch (fmt)
 			{
-				switch (fmt)
-				{
-				case MessageFormat::NMEA:
-				case MessageFormat::NMEA_TAG:
-				case MessageFormat::FULL:
-					std::cout << data[i].getNMEA() << '\n';
-					break;
-				default:
-					std::cout << data[i].getJSON() << '\n';
-					break;
-				}
+			case MessageFormat::NMEA:
+			case MessageFormat::NMEA_TAG:
+			case MessageFormat::FULL:
+				buf += data[i].getNMEA();
+				break;
+			default:
+				buf += data[i].getJSON();
+				break;
 			}
+			buf += '\n';
+			std::cout.write(buf.data(), buf.size());
 		}
 	}
 
 	void ScreenOutput::Receive(const AIS::Message *data, int len, TAG &tag)
 	{
-
 		if (fmt == MessageFormat::SILENT)
 			return;
 
+		thread_local std::string buf;
 		for (int i = 0; i < len; i++)
 		{
-			if (filter.include(data[i]))
+			if (!filter.include(data[i]))
+				continue;
+			buf.clear();
+			switch (fmt)
 			{
-				switch (fmt)
+			case MessageFormat::NMEA:
+				for (const auto &s : data[i].sentences())
 				{
-				case MessageFormat::NMEA:
-					for (const auto &s : data[i].sentences())
-						std::cout << s << '\n';
-					break;
-				case MessageFormat::NMEA_TAG:
-				{
-					json.clear();
-					data[i].getNMEATagBlock(json);
-					std::cout.write(json.data(), json.size());
-					break;
-				}
-				case MessageFormat::FULL:
-					for (const auto &s : data[i].sentences())
-					{
-
-						std::cout << s << " ( ";
-
-						if (data[i].getLength() > 0)
-							std::cout << "MSG: " << data[i].type() << ", REPEAT: " << data[i].repeat() << ", MMSI: " << data[i].mmsi();
-						else
-							std::cout << "empty";
-
-						if (tag.mode & 1 && tag.ppm != PPM_UNDEFINED && tag.level != LEVEL_UNDEFINED)
-							std::cout << ", signalpower: " << tag.level << ", ppm: " << tag.ppm;
-						if (tag.mode & 2)
-							std::cout << ", timestamp: " << data[i].getRxTime();
-						if (data[i].getStation())
-							std::cout << ", ID: " << data[i].getStation();
-
-						std::cout << ")\n";
-					}
-					break;
-				case MessageFormat::JSON_NMEA:
-				{
-					json.clear();
-					data[i].getNMEAJSON(json, tag, include_sample_start, "", "\n");
-					std::cout.write(json.data(), json.size());
+					buf += s;
+					buf += '\n';
 				}
 				break;
-				default:
-					break;
+			case MessageFormat::NMEA_TAG:
+				data[i].getNMEATagBlock(buf);
+				break;
+			case MessageFormat::FULL:
+				for (const auto &s : data[i].sentences())
+				{
+					buf += s;
+					buf += " ( ";
+					if (data[i].getLength() > 0)
+					{
+						buf += "MSG: ";
+						buf += std::to_string(data[i].type());
+						buf += ", REPEAT: ";
+						buf += std::to_string(data[i].repeat());
+						buf += ", MMSI: ";
+						buf += std::to_string(data[i].mmsi());
+					}
+					else
+					{
+						buf += "empty";
+					}
+					if ((tag.mode & 1) && tag.ppm != PPM_UNDEFINED && tag.level != LEVEL_UNDEFINED)
+					{
+						char tmp[64];
+						std::snprintf(tmp, sizeof(tmp), ", signalpower: %g, ppm: %g", tag.level, tag.ppm);
+						buf += tmp;
+					}
+					if (tag.mode & 2)
+					{
+						buf += ", timestamp: ";
+						buf += data[i].getRxTime();
+					}
+					if (data[i].getStation())
+					{
+						buf += ", ID: ";
+						buf += std::to_string(data[i].getStation());
+					}
+					buf += ")\n";
 				}
+				break;
+			case MessageFormat::JSON_NMEA:
+				data[i].getNMEAJSON(buf, tag, include_sample_start, "", "\n");
+				break;
+			default:
+				continue;
 			}
+			std::cout.write(buf.data(), buf.size());
 		}
 	}
 
 	void ScreenOutput::Receive(const JSON::JSON *data, int len, TAG &tag)
 	{
+		thread_local std::string buf;
 		for (int i = 0; i < len; i++)
 		{
-			if (filter.include(*(AIS::Message *)data[i].binary))
-			{
-				json.clear();
-				builder.stringify(data[i], json, "\n");
-				std::cout.write(json.data(), json.size());
-			}
+			if (!filter.include(*(AIS::Message *)data[i].binary))
+				continue;
+			buf.clear();
+			builder.stringify(data[i], buf, "\n");
+			std::cout.write(buf.data(), buf.size());
 		}
 	}
 }
