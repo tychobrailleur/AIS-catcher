@@ -775,16 +775,7 @@ void WebViewer::connect(const std::vector<std::unique_ptr<Receiver>> &receivers)
 	for (auto &s : states)
 		s->applyConfig(tracking, filter);
 
-	if (receivers.size() > 1)
-	{
-		Debug() << "Mutex: WebViewer enabling exclusive on raw_counter/planes (" << receivers.size() << " receivers)";
-		raw_counter.setExclusive(true);
-		planes.setExclusive(true);
-	}
-	else
-	{
-		Debug() << "Mutex: WebViewer single receiver, all sinks lock-free";
-	}
+	Debug() << "Mutex: WebViewer sinks self-lock (DB/PlaneDB), raw_counter atomic (" << receivers.size() << " receivers)";
 
 	raw_counter.setFilter(filter);
 }
@@ -951,7 +942,7 @@ std::string WebViewer::buildStatJSON(ReceiverTracker *s)
 			o->writeJSON(w);
 	}
 	w.endArray();
-	w.kv("received", (unsigned long long)raw_counter.received);
+	w.kv("received", (unsigned long long)raw_counter.received.load(std::memory_order_relaxed));
 	w.endObject();
 
 	w.finish();

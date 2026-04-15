@@ -20,6 +20,7 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <atomic>
 
 #include "Stream.h"
 #include "JSONAIS.h"
@@ -207,8 +208,8 @@ public:
 struct ByteCounter : public StreamIn<RAW> {
 	AIS::Filter filter;
 	virtual ~ByteCounter() {}
-	uint64_t received = 0;
-	void Receive(const RAW* data, int len, TAG& tag) { received += data[0].size; }
-	void Reset() { received = 0; }
+	std::atomic<uint64_t> received{0};
+	void Receive(const RAW* data, int len, TAG& tag) { received.fetch_add(data[0].size, std::memory_order_relaxed); }
+	void Reset() { received.store(0, std::memory_order_relaxed); }
 	void setFilter(const AIS::Filter &f) { filter = f; }
 };
