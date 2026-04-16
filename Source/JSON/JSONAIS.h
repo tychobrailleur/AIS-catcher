@@ -46,13 +46,43 @@ namespace AIS {
 		void ProcessMsg6Data(const AIS::Message& msg);
 		void ProcessRadio(const AIS::Message &msg, int start, int len);
 
+		// ASM decoders, payload-relative (start = bit index of first payload bit after header).
+		// Shared between msg 6 (start=88) and msg 8 (start=56):
+		void asm_imo_fid0_text(const AIS::Message& msg, int start);
+		void asm_usa_fid1_sls_meteo(const AIS::Message& msg, int start);
+		void asm_usa_fid2_sls_lock(const AIS::Message& msg, int start);
+		void asm_usa_fid32_sls_specific(const AIS::Message& msg, int start);
+
+		// Msg 6 only:
+		void asm_iala_fid0_buoy_monitor(const AIS::Message& msg, int start);
+		void asm_imo_fid2_interrogation(const AIS::Message& msg, int start);
+		void asm_imo_fid3_interrogation_ext(const AIS::Message& msg, int start);
+		void asm_imo_fid4_capability_reply(const AIS::Message& msg, int start);
+		void asm_imo_fid16_persons(const AIS::Message& msg, int start);
+		void asm_imo_fid30_text_addressed(const AIS::Message& msg, int start);
+		void asm_inland_fid55_persons(const AIS::Message& msg, int start);
+		void asm_uk_fid10_aton_monitor(const AIS::Message& msg, int start);
+		void asm_uk_fid20_buoy_position(const AIS::Message& msg, int start);
+
+		// Msg 8 only:
+		void asm_imo_fid16_vts_targets(const AIS::Message& msg, int start);
+		void asm_inland_fid10_eri_static(const AIS::Message& msg, int start);
+		void asm_imo_fid31_meteo_hydro(const AIS::Message& msg, int start);
+		void asm_inland_fid25_bridge_clearance(const AIS::Message& msg, int start);
+		void asm_imo_fid21_weather_ship(const AIS::Message& msg, int start);
+		void asm_imo_fid29_text_description(const AIS::Message& msg, int start);
+		void asm_imo_fid27_route(const AIS::Message& msg, int start);
+		void asm_imo_fid26_environmental(const AIS::Message& msg, int start);
+		void asm_imo_fid11_meteo_hydro_legacy(const AIS::Message& msg, int start);
+		void asm_usa_fid33_environmental(const AIS::Message& msg, int start);
+
 
 		void U(const AIS::Message& msg, int p, int start, int len, unsigned undefined = ~0);
 		void UL(const AIS::Message& msg, int p, int start, int len, float a, float b, unsigned undefined = ~0);
 		void US(const AIS::Message& msg, int p, int start, int len, int b, unsigned undefined = ~0);
 		void S(const AIS::Message& msg, int p, int start, int len, int undefined = ~0);
 		void SL(const AIS::Message& msg, int p, int start, int len, float a, float b, int undefined = ~0);
-		void E(const AIS::Message& msg, int p, int start, int len, int pmap = 0, const std::vector<std::string>* map = nullptr);
+		void E(const AIS::Message& msg, int p, int start, int len, int pmap = 0);
 		void TURN(const AIS::Message& msg, int p, int start, int len, unsigned undefined = ~0);
 		void B(const AIS::Message& msg, int p, int start, int len);
 		void X(const AIS::Message& msg, int p, int start, int len) {}

@@ -43,10 +43,6 @@ namespace AIS
 		std::string code;
 	};
 
-	extern const std::vector<std::string> JSON_MAP_STATUS;
-	extern const std::vector<std::string> JSON_MAP_EPFD;
-	extern const std::vector<std::string> JSON_MAP_SHIPTYPE;
-	extern const std::vector<std::string> JSON_MAP_AID_TYPE;
 	extern const std::vector<COUNTRY> JSON_MAP_MID;
 
 	void JSONAIS::U(const AIS::Message &msg, int p, int start, int len, unsigned undefined)
@@ -84,11 +80,12 @@ namespace AIS
 			json.Add(p, s * a + b);
 	}
 
-	void JSONAIS::E(const AIS::Message &msg, int p, int start, int len, int pmap, const std::vector<std::string> *map)
+	void JSONAIS::E(const AIS::Message &msg, int p, int start, int len, int pmap)
 	{
 		unsigned u = msg.getUint(start, len);
 		json.Add(p, (int)u);
-		if (map)
+		const std::vector<std::string> *map = KeyInfoMap[p].lookup_table;
+		if (map && pmap)
 		{
 			if (u < map->size())
 				json.Add(pmap, &(*map)[u]);
@@ -232,639 +229,488 @@ namespace AIS
 		}
 	}
 
+	// ---------- ASM decoders (payload-relative) ----------
+	// Each takes `start` = bit index of the first payload bit, i.e. first bit after the
+	// message header (88 for msg 6, 56 for msg 8). All internal bit positions are
+	// relative to `start` so the same decoder can be invoked from either dispatcher.
+
+	// IALA Zeni Lite Buoy Co. proprietary (DAC=0, FID=0) — aid-to-navigation monitor.
+	void JSONAIS::asm_iala_fid0_buoy_monitor(const AIS::Message &msg, int start)
+	{
+		U(msg, AIS::KEY_ASM_SUB_APP_ID, start, 16);
+		UL(msg, AIS::KEY_ASM_VOLTAGE_DATA, start + 16, 12, 0.1f, 0);
+		UL(msg, AIS::KEY_ASM_CURRENT_DATA, start + 28, 10, 0.1f, 0);
+		B(msg, AIS::KEY_ASM_POWER_SUPPLY_TYPE, start + 38, 1);
+		B(msg, AIS::KEY_ASM_LIGHT_STATUS, start + 39, 1);
+		B(msg, AIS::KEY_ASM_BATTERY_STATUS, start + 40, 1);
+		B(msg, AIS::KEY_ASM_OFF_POSITION_STATUS, start + 41, 1);
+		X(msg, AIS::KEY_SPARE, start + 42, 6);
+	}
+
+	// ITU-R M.1371 addressed/broadcast text using 6-bit ASCII (DAC=1, FID=0).
+	void JSONAIS::asm_imo_fid0_text(const AIS::Message &msg, int start)
+	{
+		B(msg, AIS::KEY_ACK_REQUIRED, start, 1);
+		U(msg, AIS::KEY_TEXT_SEQUENCE, start + 1, 11);
+		T(msg, AIS::KEY_TEXT, start + 12, MIN(924, msg.getLength() - (start + 12)), text);
+	}
+
+	// ITU-R M.1371 interrogation for a specified FMS (DAC=1, FID=2).
+	void JSONAIS::asm_imo_fid2_interrogation(const AIS::Message &msg, int start)
+	{
+		U(msg, AIS::KEY_REQUESTED_DAC, start, 10);
+		U(msg, AIS::KEY_REQUESTED_FID, start + 10, 6);
+	}
+
+	// ITU-R M.1371 interrogation (ext.) for a specified FMS (DAC=1, FID=3).
+	void JSONAIS::asm_imo_fid3_interrogation_ext(const AIS::Message &msg, int start)
+	{
+		U(msg, AIS::KEY_REQUESTED_DAC, start, 10);
+		X(msg, AIS::KEY_SPARE, start + 10, 6);
+	}
+
+	// ITU-R M.1371 capability reply — 128-bit AI-available bitstring (DAC=1, FID=4).
+	void JSONAIS::asm_imo_fid4_capability_reply(const AIS::Message &msg, int start)
+	{
+		int bits_available = MIN(128, msg.getLength() - start);
+		datastring.clear();
+		for (int i = 0; i < bits_available; i++)
+			datastring += msg.getUint(start + i, 1) ? '1' : '0';
+		json.Add(AIS::KEY_AI_AVAILABLE, &datastring);
+	}
+
+	// ITU-R M.1371 / IMO Circ.236 — number of persons on board (DAC=1, FID=16 or 40, msg 6).
+	void JSONAIS::asm_imo_fid16_persons(const AIS::Message &msg, int start)
+	{
+		U(msg, AIS::KEY_PERSONS, start, 13, 8191);
+	}
+
+	// IMO SN.1/Circ.289 Annex §14 Table 14.3 — text description, addressed (DAC=1, FID=30).
+	void JSONAIS::asm_imo_fid30_text_addressed(const AIS::Message &msg, int start)
+	{
+		U(msg, AIS::KEY_LINKAGE_ID, start, 10, 0);
+		int text_len = msg.getLength() - (start + 10);
+		if (text_len < 6) text_len = 0;
+		if (text_len > 930) text_len = 930;
+		text_len -= text_len % 6;
+		if (text_len > 0)
+			T(msg, AIS::KEY_TEXT, start + 10, text_len, text);
+	}
+
+	// Inland ECE/TRANS/SC.3/176 — number of persons on board, detailed (DAC=200, FID=55).
+	void JSONAIS::asm_inland_fid55_persons(const AIS::Message &msg, int start)
+	{
+		U(msg, AIS::KEY_CREW_COUNT, start, 8, 255);
+		U(msg, AIS::KEY_PASSENGER_COUNT, start + 8, 13, 8191);
+		U(msg, AIS::KEY_SHIPBOARD_PERSONNEL_COUNT, start + 21, 8, 255);
+	}
+
+	// IALA ASM — aid-to-navigation monitoring (DAC=235 UK&NI / DAC=250 ROI, FID=10).
+	void JSONAIS::asm_uk_fid10_aton_monitor(const AIS::Message &msg, int start)
+	{
+		UL(msg, AIS::KEY_ANA_INT, start, 10, 0.05f, 0);
+		UL(msg, AIS::KEY_ANA_EXT1, start + 10, 10, 0.05f, 0);
+		UL(msg, AIS::KEY_ANA_EXT2, start + 20, 10, 0.05f, 0);
+		U(msg, AIS::KEY_RACON, start + 30, 2);
+		U(msg, AIS::KEY_HEALTH, start + 34, 1);
+		U(msg, AIS::KEY_STAT_EXT, start + 35, 8);
+		B(msg, AIS::KEY_OFF_POSITION, start + 43, 1);
+	}
+
+	// IALA ASM — Trinity House buoy position monitoring (DAC=235, FID=20).
+	void JSONAIS::asm_uk_fid20_buoy_position(const AIS::Message &msg, int start)
+	{
+		T(msg, AIS::KEY_STATION_NAME, start, 204, text);
+		U(msg, AIS::KEY_UTC_DAY, start + 204, 5, 0);
+		U(msg, AIS::KEY_UTC_HOUR, start + 209, 5, 24);
+		U(msg, AIS::KEY_UTC_MINUTE, start + 214, 6, 60);
+		SL(msg, AIS::KEY_LON, start + 220, 28, 1 / 600000.0f, 0, 1810000);
+		SL(msg, AIS::KEY_LAT, start + 248, 27, 1 / 600000.0f, 0, 910000);
+		B(msg, AIS::KEY_OFF_POSITION, start + 275, 1);
+		X(msg, AIS::KEY_SPARE, start + 276, 4);
+	}
+
+	// Saint Lawrence Seaway meteorological/hydrological messages (DAC=316 CA / 366 US, FID=1).
+	// Sub-messages: 1=weather station, 2=wind, 3=water level, 6=water flow.
+	void JSONAIS::asm_usa_fid1_sls_meteo(const AIS::Message &msg, int start)
+	{
+		U(msg, AIS::KEY_MESSAGE_ID, start + 2, 6);
+		unsigned message_id = msg.getUint(start + 2, 6);
+		int rpt = start + 8; // first report starts 8 bits into the payload
+
+		// Common 111-bit header (timestamp + station ID + position) shared by msgs 1/2/3/6.
+		auto emit_common_header = [&]() {
+			U(msg, AIS::KEY_MONTH, rpt, 4, 0);
+			U(msg, AIS::KEY_DAY, rpt + 4, 5, 0);
+			U(msg, AIS::KEY_HOUR, rpt + 9, 5, 24);
+			U(msg, AIS::KEY_MINUTE, rpt + 14, 6, 60);
+			T(msg, AIS::KEY_STATION_ID, rpt + 20, 42, text);
+			SL(msg, AIS::KEY_LON, rpt + 62, 25, 1 / 60000.0f, 0, 10800000);
+			SL(msg, AIS::KEY_LAT, rpt + 87, 24, 1 / 60000.0f, 0, 5400000);
+		};
+
+		if (message_id == 1 && msg.getLength() >= rpt + 192)
+		{
+			emit_common_header();
+			UL(msg, AIS::KEY_WSPEED, rpt + 111, 10, 0.1f, 0);
+			UL(msg, AIS::KEY_WGUST, rpt + 121, 10, 0.1f, 0);
+			U(msg, AIS::KEY_WDIR, rpt + 131, 9, 511);
+			U(msg, AIS::KEY_BAROMETRIC_PRESSURE, rpt + 140, 14, 16383);
+			SL(msg, AIS::KEY_AIR_TEMPERATURE, rpt + 154, 10, 0.1f, 0, -512);
+			SL(msg, AIS::KEY_DEW_POINT, rpt + 164, 10, 0.1f, 0, -512);
+			UL(msg, AIS::KEY_VISIBILITY_KM, rpt + 174, 8, 0.1f, 0);
+			SL(msg, AIS::KEY_WATERTEMP, rpt + 182, 10, 0.1f, 0, -512);
+		}
+		else if (message_id == 3 && msg.getLength() >= rpt + 144)
+		{
+			emit_common_header();
+			U(msg, AIS::KEY_WATER_LEVEL_TYPE, rpt + 111, 1);
+			SL(msg, AIS::KEY_WATERLEVEL, rpt + 112, 16, 0.01f, 0, -32768);
+			U(msg, AIS::KEY_REFERENCE_DATUM, rpt + 128, 2);
+			U(msg, AIS::KEY_READING_TYPE, rpt + 130, 2);
+			X(msg, AIS::KEY_SPARE, rpt + 132, 12);
+		}
+		else if (message_id == 2 && msg.getLength() >= rpt + 144)
+		{
+			emit_common_header();
+			UL(msg, AIS::KEY_WIND_SPEED_AVG, rpt + 111, 10, 0.1f, 0);
+			UL(msg, AIS::KEY_WIND_GUST_SPEED, rpt + 121, 10, 0.1f, 0);
+			U(msg, AIS::KEY_WIND_DIRECTION_AVG, rpt + 131, 9, 511);
+			X(msg, AIS::KEY_SPARE, rpt + 140, 4);
+		}
+		else if (message_id == 6 && msg.getLength() >= rpt + 144)
+		{
+			emit_common_header();
+			U(msg, AIS::KEY_WATER_FLOW, rpt + 111, 14, 16383);
+			X(msg, AIS::KEY_SPARE, rpt + 125, 19);
+		}
+	}
+
+	// SLS vessel/lock scheduling (DAC=316/366, FID=2) — only message_id exposed.
+	void JSONAIS::asm_usa_fid2_sls_lock(const AIS::Message &msg, int start)
+	{
+		U(msg, AIS::KEY_MESSAGE_ID, start + 2, 6);
+	}
+
+	// SLS specific messages (DAC=316/366, FID=32) — only message_id exposed.
+	void JSONAIS::asm_usa_fid32_sls_specific(const AIS::Message &msg, int start)
+	{
+		U(msg, AIS::KEY_MESSAGE_ID, start + 2, 6);
+	}
+
+	// IALA ASM — VTS targets derived by non-AIS means (DAC=1, FID=16, msg 8).
+	// Note: same (DAC,FID) is "persons on board" in msg 6; the spec re-uses the slot.
+	void JSONAIS::asm_imo_fid16_vts_targets(const AIS::Message &msg, int start)
+	{
+		if (msg.getLength() < start + 120) return;
+		U(msg, AIS::KEY_VTS_TARGET_ID_TYPE, start, 2);
+		unsigned id_type = msg.getUint(start, 2);
+		if (id_type == 2)
+			T(msg, AIS::KEY_VTS_TARGET_ID, start + 2, 42, text);
+		else
+			U(msg, AIS::KEY_VTS_TARGET_ID, start + 2, 42);
+		X(msg, AIS::KEY_SPARE, start + 44, 4);
+		SL(msg, AIS::KEY_VTS_TARGET_LAT, start + 48, 24, 1 / 60000.0f, 0);
+		SL(msg, AIS::KEY_VTS_TARGET_LON, start + 72, 25, 1 / 60000.0f, 0);
+		U(msg, AIS::KEY_VTS_TARGET_COG, start + 97, 9, 360);
+		U(msg, AIS::KEY_VTS_TARGET_TIMESTAMP, start + 106, 6, 60);
+		U(msg, AIS::KEY_VTS_TARGET_SOG, start + 112, 8, 255);
+	}
+
+	// Inland ECE/TRANS/SC.3/176 — ERI ship static voyage data (DAC=200, FID=10).
+	void JSONAIS::asm_inland_fid10_eri_static(const AIS::Message &msg, int start)
+	{
+		T(msg, AIS::KEY_VIN, start, 48, text);
+		UL(msg, AIS::KEY_LENGTH, start + 48, 13, 0.1f, 0);
+		UL(msg, AIS::KEY_BEAM, start + 61, 10, 0.1f, 0);
+		E(msg, AIS::KEY_SHIPTYPE, start + 71, 14);
+		E(msg, AIS::KEY_HAZARD, start + 85, 3);
+		UL(msg, AIS::KEY_DRAUGHT, start + 88, 11, 0.01f, 0);
+		E(msg, AIS::KEY_LOADED, start + 99, 2);
+		B(msg, AIS::KEY_SPEED_Q, start + 101, 1);
+		B(msg, AIS::KEY_COURSE_Q, start + 102, 1);
+		B(msg, AIS::KEY_HEADING_Q, start + 103, 1);
+	}
+
+	// IMO SN.1/Circ.289 Annex §11 — meteorological/hydrological data (DAC=1, FID=31).
+	void JSONAIS::asm_imo_fid31_meteo_hydro(const AIS::Message &msg, int start)
+	{
+		SL(msg, AIS::KEY_LON, start, 25, 1 / 60000.0f, 0);
+		SL(msg, AIS::KEY_LAT, start + 25, 24, 1 / 60000.0f, 0);
+		B(msg, AIS::KEY_ACCURACY, start + 49, 1);
+		U(msg, AIS::KEY_DAY, start + 50, 5, 0);
+		U(msg, AIS::KEY_HOUR, start + 55, 5, 24);
+		U(msg, AIS::KEY_MINUTE, start + 60, 6, 60);
+		U(msg, AIS::KEY_WSPEED, start + 66, 7, 127);
+		U(msg, AIS::KEY_WGUST, start + 73, 7, 127);
+		U(msg, AIS::KEY_WDIR, start + 80, 9, 360);
+		U(msg, AIS::KEY_WGUSTDIR, start + 89, 9, 360);
+		SL(msg, AIS::KEY_AIRTEMP, start + 98, 11, 0.1f, 0, -1024);
+		U(msg, AIS::KEY_HUMIDITY, start + 109, 7, 101);
+		SL(msg, AIS::KEY_DEWPOINT, start + 116, 10, 0.1f, 0, 501);
+		US(msg, AIS::KEY_PRESSURE, start + 126, 9, 799, 511);
+		U(msg, AIS::KEY_PRESSURETEND, start + 135, 2, 3);
+		B(msg, AIS::KEY_VISGREATER, start + 137, 1);
+		UL(msg, AIS::KEY_VISIBILITY, start + 138, 7, 0.1f, 0, 127);
+		UL(msg, AIS::KEY_WATERLEVEL, start + 145, 12, 0.01f, -10, 4001);
+		U(msg, AIS::KEY_LEVELTREND, start + 157, 2, 3);
+		UL(msg, AIS::KEY_CSPEED, start + 159, 8, 0.1f, 0, 255);
+		U(msg, AIS::KEY_CDIR, start + 167, 9, 360);
+		UL(msg, AIS::KEY_CSPEED2, start + 176, 8, 0.1f, 0, 255);
+		U(msg, AIS::KEY_CDIR2, start + 184, 9, 360);
+		U(msg, AIS::KEY_CDEPTH2, start + 193, 5, 31);
+		UL(msg, AIS::KEY_CSPEED3, start + 198, 8, 0.1f, 0, 255);
+		U(msg, AIS::KEY_CDIR3, start + 206, 9, 360);
+		U(msg, AIS::KEY_CDEPTH3, start + 215, 5, 31);
+		UL(msg, AIS::KEY_WAVEHEIGHT, start + 220, 8, 0.1f, 0, 255);
+		U(msg, AIS::KEY_WAVEPERIOD, start + 228, 6, 63);
+		U(msg, AIS::KEY_WAVEDIR, start + 234, 9, 360);
+		UL(msg, AIS::KEY_SWELLHEIGHT, start + 243, 8, 0.1f, 0, 255);
+		U(msg, AIS::KEY_SWELLPERIOD, start + 251, 6, 63);
+		U(msg, AIS::KEY_SWELLDIR, start + 257, 9, 360);
+		U(msg, AIS::KEY_SEASTATE, start + 266, 4);
+		SL(msg, AIS::KEY_WATERTEMP, start + 270, 10, 0.1, 0, 501);
+		U(msg, AIS::KEY_PRECIPTYPE, start + 280, 3, 7);
+		U(msg, AIS::KEY_SALINITY, start + 283, 9, 510);
+		U(msg, AIS::KEY_ICE, start + 292, 2, 3);
+	}
+
+	// Inland AIS (CCNR/CESNI) — present bridge clearance (DAC=200, FID=25). 168-bit, 1 slot.
+	void JSONAIS::asm_inland_fid25_bridge_clearance(const AIS::Message &msg, int start)
+	{
+		U(msg, AIS::KEY_ASM_VERSION, start, 3);
+		T(msg, AIS::KEY_UN_COUNTRY, start + 3, 12, text);
+		U(msg, AIS::KEY_FAIRWAY_SECTION, start + 15, 17, 0);
+		T(msg, AIS::KEY_OBJECT_CODE, start + 32, 30, name);
+		U(msg, AIS::KEY_FAIRWAY_HECTOMETRE, start + 62, 17, 0);
+		U(msg, AIS::KEY_BRIDGE_CLEARANCE, start + 79, 14, 0);
+		U(msg, AIS::KEY_MEASUREMENT_AGE, start + 93, 10, 722);
+		U(msg, AIS::KEY_CLEARANCE_ACCURACY, start + 103, 5, 0);
+	}
+
+	// IMO SN.1/Circ.289 Annex §10 Table 10.1 — weather observation from ship (DAC=1, FID=21).
+	// Only variant 0 (non-WMO) is decoded; variant 1 (WMO BUFR) is not.
+	void JSONAIS::asm_imo_fid21_weather_ship(const AIS::Message &msg, int start)
+	{
+		unsigned variant = msg.getUint(start, 1);
+		U(msg, AIS::KEY_WEATHER_REPORT_TYPE, start, 1);
+		if (variant != 0) return;
+		T(msg, AIS::KEY_STATION_NAME, start + 1, 120, name);
+		SL(msg, AIS::KEY_LON, start + 121, 25, 1 / 60000.0f, 0, 10860000);
+		SL(msg, AIS::KEY_LAT, start + 146, 24, 1 / 60000.0f, 0, 5460000);
+		U(msg, AIS::KEY_DAY, start + 170, 5, 0);
+		U(msg, AIS::KEY_HOUR, start + 175, 5, 24);
+		U(msg, AIS::KEY_MINUTE, start + 180, 6, 60);
+		U(msg, AIS::KEY_PRESENT_WEATHER, start + 186, 4, 8);
+		B(msg, AIS::KEY_VISGREATER, start + 190, 1);
+		UL(msg, AIS::KEY_VISIBILITY, start + 191, 7, 0.1f, 0, 127);
+		U(msg, AIS::KEY_HUMIDITY, start + 198, 7, 101);
+		U(msg, AIS::KEY_WSPEED, start + 205, 7, 127);
+		U(msg, AIS::KEY_WDIR, start + 212, 9, 360);
+		US(msg, AIS::KEY_PRESSURE, start + 221, 9, 799, 403);
+		U(msg, AIS::KEY_PRESSURETEND_WMO, start + 230, 4, 15);
+		SL(msg, AIS::KEY_AIRTEMP, start + 234, 11, 0.1f, 0, -1024);
+		SL(msg, AIS::KEY_WATERTEMP, start + 245, 10, 0.1f, 0, 501);
+		U(msg, AIS::KEY_WAVEPERIOD, start + 255, 6, 63);
+		UL(msg, AIS::KEY_WAVEHEIGHT, start + 261, 8, 0.1f, 0, 255);
+		U(msg, AIS::KEY_WAVEDIR, start + 269, 9, 360);
+		UL(msg, AIS::KEY_SWELLHEIGHT, start + 278, 8, 0.1f, 0, 255);
+		U(msg, AIS::KEY_SWELLDIR, start + 286, 9, 360);
+		U(msg, AIS::KEY_SWELLPERIOD, start + 295, 6, 63);
+	}
+
+	// IMO SN.1/Circ.289 Annex §14 Table 14.1 — text description, broadcast (DAC=1, FID=29).
+	void JSONAIS::asm_imo_fid29_text_description(const AIS::Message &msg, int start)
+	{
+		U(msg, AIS::KEY_LINKAGE_ID, start, 10, 0);
+		int text_len = msg.getLength() - (start + 10);
+		if (text_len < 6) text_len = 0;
+		if (text_len > 966) text_len = 966;
+		text_len -= text_len % 6;
+		if (text_len > 0)
+			T(msg, AIS::KEY_TEXT, start + 10, text_len, text);
+	}
+
+	// IMO SN.1/Circ.289 Annex §13 Table 13.1 — route information, broadcast (DAC=1, FID=27).
+	void JSONAIS::asm_imo_fid27_route(const AIS::Message &msg, int start)
+	{
+		U(msg, AIS::KEY_LINKAGE_ID, start, 10, 0);
+		U(msg, AIS::KEY_SENDER_CLASSIFICATION, start + 10, 3);
+		U(msg, AIS::KEY_ROUTE_TYPE, start + 13, 5);
+		U(msg, AIS::KEY_MONTH, start + 18, 4, 0);
+		U(msg, AIS::KEY_DAY, start + 22, 5, 0);
+		U(msg, AIS::KEY_HOUR, start + 27, 5, 24);
+		U(msg, AIS::KEY_MINUTE, start + 32, 6, 60);
+		U(msg, AIS::KEY_DURATION_MINUTES, start + 38, 18, 262143);
+		U(msg, AIS::KEY_WAYPOINT_COUNT, start + 56, 5, 0);
+		unsigned n_wp = msg.getUint(start + 56, 5);
+		if (n_wp > 16) n_wp = 16;
+		int avail_bits = msg.getLength() - (start + 61);
+		if ((int)(n_wp * 55) > avail_bits) n_wp = (avail_bits > 0 ? avail_bits / 55 : 0);
+		datastring.clear();
+		for (unsigned i = 0; i < n_wp; i++)
+		{
+			int base = start + 61 + i * 55;
+			int lon_raw = msg.getInt(base, 28);
+			int lat_raw = msg.getInt(base + 28, 27);
+			if (i > 0) datastring += ';';
+			char buf[48];
+			snprintf(buf, sizeof(buf), "%.6f,%.6f",
+				(double)lat_raw / 600000.0, (double)lon_raw / 600000.0);
+			datastring += buf;
+		}
+		if (!datastring.empty())
+			json.Add(AIS::KEY_WAYPOINTS, &datastring);
+	}
+
+	// IMO SN.1/Circ.289 Annex §12 Table 12.1 — environmental (DAC=1, FID=26).
+	// Only the first sensor report's common header is exposed; per-sensor bodies not decoded.
+	void JSONAIS::asm_imo_fid26_environmental(const AIS::Message &msg, int start)
+	{
+		if (msg.getLength() < start + 27) return;
+		U(msg, AIS::KEY_SENSOR_REPORT_TYPE, start, 4);
+		U(msg, AIS::KEY_DAY, start + 4, 5, 0);
+		U(msg, AIS::KEY_HOUR, start + 9, 5, 24);
+		U(msg, AIS::KEY_MINUTE, start + 14, 6, 60);
+		U(msg, AIS::KEY_SITE_ID, start + 20, 7);
+	}
+
+	// Legacy IMO SN/Circ.236 meteo/hydro (DAC=1, FID=11) — superseded by FID=31.
+	void JSONAIS::asm_imo_fid11_meteo_hydro_legacy(const AIS::Message &msg, int start)
+	{
+		SL(msg, AIS::KEY_LAT, start, 24, 1 / 60000.0f, 0, 8388607);
+		SL(msg, AIS::KEY_LON, start + 24, 25, 1 / 60000.0f, 0, 16777215);
+		U(msg, AIS::KEY_DAY, start + 49, 5, 0);
+		U(msg, AIS::KEY_HOUR, start + 54, 5, 24);
+		U(msg, AIS::KEY_MINUTE, start + 59, 6, 60);
+		U(msg, AIS::KEY_WSPEED, start + 65, 7, 127);
+		U(msg, AIS::KEY_WGUST, start + 72, 7, 127);
+		U(msg, AIS::KEY_WDIR, start + 79, 9, 511);
+		U(msg, AIS::KEY_WGUSTDIR, start + 88, 9, 511);
+		UL(msg, AIS::KEY_AIRTEMP, start + 97, 11, 0.1f, -60.0f, 2047);
+		U(msg, AIS::KEY_HUMIDITY, start + 108, 7, 127);
+		UL(msg, AIS::KEY_DEWPOINT, start + 115, 10, 0.1f, -20.0f, 1023);
+		US(msg, AIS::KEY_PRESSURE, start + 125, 9, 800, 511);
+		U(msg, AIS::KEY_PRESSURETEND, start + 134, 2, 3);
+		UL(msg, AIS::KEY_VISIBILITY, start + 136, 8, 0.1f, 0.0f, 255);
+		UL(msg, AIS::KEY_WATERLEVEL, start + 144, 9, 0.1f, -10.0f, 511);
+		U(msg, AIS::KEY_LEVELTREND, start + 153, 2, 3);
+		UL(msg, AIS::KEY_CSPEED, start + 155, 8, 0.1f, 0.0f, 255);
+		U(msg, AIS::KEY_CDIR, start + 163, 9, 511);
+		UL(msg, AIS::KEY_CSPEED2, start + 172, 8, 0.1f, 0.0f, 255);
+		U(msg, AIS::KEY_CDIR2, start + 180, 9, 511);
+		U(msg, AIS::KEY_CDEPTH2, start + 189, 5, 31);
+		UL(msg, AIS::KEY_CSPEED3, start + 194, 8, 0.1f, 0.0f, 255);
+		U(msg, AIS::KEY_CDIR3, start + 202, 9, 511);
+		U(msg, AIS::KEY_CDEPTH3, start + 211, 5, 31);
+		UL(msg, AIS::KEY_WAVEHEIGHT, start + 216, 8, 0.1f, 0.0f, 255);
+		U(msg, AIS::KEY_WAVEPERIOD, start + 224, 6, 63);
+		U(msg, AIS::KEY_WAVEDIR, start + 230, 9, 511);
+		UL(msg, AIS::KEY_SWELLHEIGHT, start + 239, 8, 0.1f, 0.0f, 255);
+		U(msg, AIS::KEY_SWELLPERIOD, start + 247, 6, 63);
+		U(msg, AIS::KEY_SWELLDIR, start + 253, 9, 511);
+		U(msg, AIS::KEY_SEASTATE, start + 262, 4, 13);
+		UL(msg, AIS::KEY_WATERTEMP, start + 266, 10, 0.1f, -10.0f, 1023);
+		U(msg, AIS::KEY_PRECIPTYPE, start + 276, 3, 7);
+		UL(msg, AIS::KEY_SALINITY, start + 279, 9, 0.1f, 0.0f, 511);
+		U(msg, AIS::KEY_ICE, start + 288, 2, 3);
+	}
+
+	// U.S. Environmental Sensor Report (DAC=367, FID=33) — first sensor report only.
+	void JSONAIS::asm_usa_fid33_environmental(const AIS::Message &msg, int start)
+	{
+		if (msg.getLength() < start + 27) return;
+		int report_type = msg.getUint(start, 4);
+		U(msg, AIS::KEY_REPORT_TYPE, start, 4);
+		U(msg, AIS::KEY_DAY, start + 4, 5, 0);
+		U(msg, AIS::KEY_HOUR, start + 9, 5, 24);
+		U(msg, AIS::KEY_MINUTE, start + 14, 6, 60);
+		U(msg, AIS::KEY_SITE_ID, start + 20, 7);
+		if (msg.getLength() < start + 112) return;
+		int body = start + 27;
+		if (report_type == 0)
+		{
+			U(msg, AIS::KEY_VERSION, body, 6);
+			SL(msg, AIS::KEY_LON, body + 6, 28, 1 / 600000.0f, 0);
+			SL(msg, AIS::KEY_LAT, body + 34, 27, 1 / 600000.0f, 0);
+			U(msg, AIS::KEY_PRECISION, body + 61, 3);
+			S(msg, AIS::KEY_ALT, body + 64, 12, -4096);
+		}
+		else if (report_type == 1)
+		{
+			T(msg, AIS::KEY_NAME, body, 84, text);
+		}
+		else if (report_type == 2)
+		{
+			U(msg, AIS::KEY_WSPEED, body, 7, 127);
+			U(msg, AIS::KEY_WGUST, body + 7, 7, 127);
+			U(msg, AIS::KEY_WDIR, body + 14, 9, 360);
+			U(msg, AIS::KEY_WGUSTDIR, body + 23, 9, 360);
+			U(msg, AIS::KEY_SENSOR_DESCRIPTION, body + 33, 2);
+			U(msg, AIS::KEY_FORECAST_WSPEED, body + 35, 7, 127);
+			U(msg, AIS::KEY_FORECAST_WGUST, body + 42, 7, 127);
+			U(msg, AIS::KEY_FORECAST_WDIR, body + 49, 9, 360);
+			U(msg, AIS::KEY_FORECAST_DAY, body + 58, 5, 0);
+			U(msg, AIS::KEY_FORECAST_HOUR, body + 63, 5, 24);
+			U(msg, AIS::KEY_FORECAST_MINUTE, body + 68, 6, 60);
+			U(msg, AIS::KEY_FORECAST_DURATION, body + 74, 8, 255);
+		}
+		else if (report_type == 3)
+		{
+			U(msg, AIS::KEY_WATER_LEVEL_TYPE, body, 1);
+			SL(msg, AIS::KEY_WATERLEVEL, body + 1, 16, 0.01f, 0, -32768);
+			U(msg, AIS::KEY_LEVELTREND, body + 17, 2);
+			U(msg, AIS::KEY_REFERENCE_DATUM, body + 19, 5);
+		}
+	}
+
+	// ---------- Dispatchers ----------
+
 	void JSONAIS::ProcessMsg6Data(const AIS::Message &msg)
 	{
+		const int start = 88;
 		int dac = msg.getUint(72, 10);
 		int fid = msg.getUint(82, 6);
 
-		if (dac == 0 && fid == 0)
-		{
-			// IALA ASM (Automatic System Monitoring) for monitoring aids to navigation
-			// Zeni Lite Buoy Co., Ltd proprietary message format
-			// Message structure based on IALA specification
-			U(msg, AIS::KEY_ASM_SUB_APP_ID, 88, 16);			  // Sub-application ID (16 bits)
-			UL(msg, AIS::KEY_ASM_VOLTAGE_DATA, 104, 12, 0.1f, 0); // Voltage data (12 bits, max 409.6V, resolution 0.1V)
-			UL(msg, AIS::KEY_ASM_CURRENT_DATA, 116, 10, 0.1f, 0); // Current data (10 bits, max 102.3A, resolution 0.1A)
-			B(msg, AIS::KEY_ASM_POWER_SUPPLY_TYPE, 126, 1);		  // Power supply type (1 bit: 0=AC, 1=DC)
-			B(msg, AIS::KEY_ASM_LIGHT_STATUS, 127, 1);			  // Light status (1 bit: 0=Off, 1=On)
-			B(msg, AIS::KEY_ASM_BATTERY_STATUS, 128, 1);		  // Battery status (1 bit: 0=Good, 1=Low voltage)
-			B(msg, AIS::KEY_ASM_OFF_POSITION_STATUS, 129, 1);	  // Off position status (1 bit: 0=On position, 1=Off position)
-			X(msg, AIS::KEY_SPARE, 130, 6);						  // Spare bits (6 bits, for future use)
-		}
-		else if (dac == 1 && fid == 0)
-		{
-			// ITU-R M.1371 - Addressed text message
-			B(msg, AIS::KEY_ACK_REQUIRED, 88, 1);
-			U(msg, AIS::KEY_TEXT_SEQUENCE, 89, 11);
-			T(msg, AIS::KEY_TEXT, 100, MIN(906, msg.getLength() - 100), text);
-		}
-		else if (dac == 1 && fid == 2)
-		{
-			// ITU-R M.1371 - Interrogation for a specified FMS
-			U(msg, AIS::KEY_REQUESTED_DAC, 88, 10);
-			U(msg, AIS::KEY_REQUESTED_FID, 98, 6);
-		}
-		else if (dac == 1 && fid == 3)
-		{
-			// ITU-R M.1371 - Interrogation for a specified FMS
-			U(msg, AIS::KEY_REQUESTED_DAC, 88, 10);
-			X(msg, AIS::KEY_SPARE, 98, 6);
-		}
-		else if (dac == 1 && fid == 4)
-		{
-			// ITU-R M.1371 - Capability reply
-			// Convert 128-bit AI available field to bitstring
-			int bits_available = MIN(128, msg.getLength() - 88);
-			datastring.clear();
-
-			for (int i = 0; i < bits_available; i++)
-			{
-				datastring += msg.getUint(88 + i, 1) ? '1' : '0';
-			}
-
-			json.Add(AIS::KEY_AI_AVAILABLE, &datastring);
-		}
-		else if (dac == 1 && (fid == 16 || fid == 40))
-		{
-			// ITU-R M.1371 - Number of persons on board
-			U(msg, AIS::KEY_PERSONS, 88, 13, 8191);
-		}
-		else if (dac == 200 && fid == 55)
-		{
-			// ECE-TRANS-SC.3-176 - Number of persons on board (detailed)
-			// Inland vessels specific message with breakdown by person type
-			U(msg, AIS::KEY_CREW_COUNT, 88, 8, 255);				 // Crew members (0-254, 255=unknown)
-			U(msg, AIS::KEY_PASSENGER_COUNT, 96, 13, 8191);			 // Passengers (0-8190, 8191=unknown)
-			U(msg, AIS::KEY_SHIPBOARD_PERSONNEL_COUNT, 109, 8, 255); // Shipboard personnel (0-254, 255=unknown)
-		}
-		else if ((dac == 235 || dac == 250) && fid == 10)
-		{
-			// IALA ASM - Aids to Navigation Monitoring Data
-			// DAC=235 (UK & NI) or DAC=250 (ROI), FI=10
-			UL(msg, AIS::KEY_ANA_INT, 88, 10, 0.05f, 0);   // Analogue internal (0.05-36V, 0.05V step)
-			UL(msg, AIS::KEY_ANA_EXT1, 98, 10, 0.05f, 0);  // Analogue external 1 (0.05-36V, 0.05V step)
-			UL(msg, AIS::KEY_ANA_EXT2, 108, 10, 0.05f, 0); // Analogue external 2 (0.05-36V, 0.05V step)
-			U(msg, AIS::KEY_RACON, 118, 2);				   // RACON status (2 bits)
-			U(msg, AIS::KEY_HEALTH, 122, 1);			   // Health status (1 bit: 0=Good, 1=Alarm)
-			U(msg, AIS::KEY_STAT_EXT, 123, 8);			   // Status bits external (8 digital inputs)
-			B(msg, AIS::KEY_OFF_POSITION, 131, 1);		   // Off position status (1 bit: 0=On position, 1=Off position)
-		}
-		else if (dac == 235 && fid == 20)
-		{
-			// IALA ASM - Buoy Position Monitoring (Trinity House)
-			// DAC=235 (UK & NI area code), FI=20
-			T(msg, AIS::KEY_STATION_NAME, 88, 204, text);			   // Station name (204 bits)
-			U(msg, AIS::KEY_UTC_DAY, 292, 5, 0);					   // UTC Day 1-31, 0=not available
-			U(msg, AIS::KEY_UTC_HOUR, 297, 5, 24);					   // UTC Hour 0-23, 24=not available
-			U(msg, AIS::KEY_UTC_MINUTE, 302, 6, 60);				   // UTC Minute 0-59, 60=not available
-			SL(msg, AIS::KEY_LON, 308, 28, 1 / 600000.0f, 0, 1810000); // Longitude in 1/10000 min, 181°=not available
-			SL(msg, AIS::KEY_LAT, 336, 27, 1 / 600000.0f, 0, 910000);  // Latitude in 1/10000 min, 91°=not available
-			B(msg, AIS::KEY_OFF_POSITION, 363, 1);					   // Off position status: 0=on position, 1=off position
-			X(msg, AIS::KEY_SPARE, 364, 4);							   // Spare bits (4 bits)
-		}
-		else if ((dac == 316 || dac == 366) && fid == 1)
-		{
-			// Saint Lawrence Seaway Meteorological and Hydrological Messages (Addressed)
-			// DAC=316 (Canada) or DAC=366 (US), FI=1
-			// Message ID indicates specific message type:
-			// 1=Weather Station, 2=Wind Information, 3=Water Level, 6=Water Flow
-			U(msg, AIS::KEY_MESSAGE_ID, 90, 6); // Message Identifier (6 bits)
-
-			unsigned message_id = msg.getUint(90, 6);
-			if (message_id == 1)
-			{
-				// Weather Station Message - decode first weather report
-				// Each report is 192 bits, starting at bit 96
-				if (msg.getLength() >= 288)
-				{ // Ensure we have at least one complete report (96 + 192 = 288 bits)
-					int start_bit = 96;
-
-					// Timetag (20 bits): Month(4), Day(5), Hours(5), Minutes(6)
-					U(msg, AIS::KEY_MONTH, start_bit, 4, 0);		// Month 1-12, 0=not available
-					U(msg, AIS::KEY_DAY, start_bit + 4, 5, 0);		// Day 1-31, 0=not available
-					U(msg, AIS::KEY_HOUR, start_bit + 9, 5, 24);	// Hours 0-23, 24=not available
-					U(msg, AIS::KEY_MINUTE, start_bit + 14, 6, 60); // Minutes 0-59, 60=not available
-
-					// Station ID (42 bits): Seven 6-bit ASCII characters
-					T(msg, AIS::KEY_STATION_ID, start_bit + 20, 42, text);
-
-					// Position (49 bits total)
-					SL(msg, AIS::KEY_LON, start_bit + 62, 25, 1 / 60000.0f, 0, 10800000); // Longitude in 1/1000 min, 181°=not available
-					SL(msg, AIS::KEY_LAT, start_bit + 87, 24, 1 / 60000.0f, 0, 5400000);  // Latitude in 1/1000 min, 91°=not available
-
-					// Weather Station Data (81 bits total)
-					UL(msg, AIS::KEY_WSPEED, start_bit + 111, 10, 0.1f, 0);				   // Wind speed in knots*10, 1023=not available
-					UL(msg, AIS::KEY_WGUST, start_bit + 121, 10, 0.1f, 0);				   // Wind gust in knots*10, 1023=not available
-					U(msg, AIS::KEY_WDIR, start_bit + 131, 9, 511);						   // Wind direction in degrees, 511=not available
-					U(msg, AIS::KEY_BAROMETRIC_PRESSURE, start_bit + 140, 14, 16383);	   // Atmospheric pressure in 0.1 millibars, 16383=not available
-					SL(msg, AIS::KEY_AIR_TEMPERATURE, start_bit + 154, 10, 0.1f, 0, -512); // Air temperature in °C*10, -512=not available
-					SL(msg, AIS::KEY_DEW_POINT, start_bit + 164, 10, 0.1f, 0, -512);	   // Dew point in °C*10, -512=not available
-					UL(msg, AIS::KEY_VISIBILITY, start_bit + 174, 8, 0.1f, 0);			   // Visibility in km*10, 255=not available
-					SL(msg, AIS::KEY_WATERTEMP, start_bit + 182, 10, 0.1f, 0, -512);	   // Water temperature in °C*10, -512=not available
-				}
-			}
-			else if (message_id == 3)
-			{
-				// Water Level Message - decode first water level report
-				// Each report is 144 bits, starting at bit 96
-				if (msg.getLength() >= 240)
-				{ // Ensure we have at least one complete report (96 + 144 = 240 bits)
-					int start_bit = 96;
-
-					// Timetag (20 bits): Month(4), Day(5), Hours(5), Minutes(6)
-					U(msg, AIS::KEY_MONTH, start_bit, 4, 0);		// Month 1-12, 0=not available
-					U(msg, AIS::KEY_DAY, start_bit + 4, 5, 0);		// Day 1-31, 0=not available
-					U(msg, AIS::KEY_HOUR, start_bit + 9, 5, 24);	// Hours 0-23, 24=not available
-					U(msg, AIS::KEY_MINUTE, start_bit + 14, 6, 60); // Minutes 0-59, 60=not available
-
-					// Station ID (42 bits): Seven 6-bit ASCII characters
-					T(msg, AIS::KEY_STATION_ID, start_bit + 20, 42, text);
-
-					// Position (49 bits total)
-					SL(msg, AIS::KEY_LON, start_bit + 62, 25, 1 / 60000.0f, 0, 10800000); // Longitude in 1/1000 min, 181°=not available
-					SL(msg, AIS::KEY_LAT, start_bit + 87, 24, 1 / 60000.0f, 0, 5400000);  // Latitude in 1/1000 min, 91°=not available
-
-					// Water Level Data (21 bits total)
-					U(msg, AIS::KEY_WATER_LEVEL_TYPE, start_bit + 111, 1);				 // 0=Relative to datum, 1=Water depth
-					SL(msg, AIS::KEY_WATERLEVEL, start_bit + 112, 16, 0.01f, 0, -32768); // Water level in cm, -32768=not available
-					U(msg, AIS::KEY_REFERENCE_DATUM, start_bit + 128, 2);				 // 0=MLLW, 1=IGLD-85, 2,3=reserved
-					U(msg, AIS::KEY_READING_TYPE, start_bit + 130, 2);					 // 0=average, 1=estimated, 2,3=reserved
-
-					// Reserved (12 bits) - skip
-					X(msg, AIS::KEY_SPARE, start_bit + 132, 12);
-				}
-			}
-			else if (message_id == 2)
-			{
-				// Wind Information Message - decode first wind report
-				// Each report is 144 bits, starting at bit 96
-				if (msg.getLength() >= 240)
-				{ // Ensure we have at least one complete report (96 + 144 = 240 bits)
-					int start_bit = 96;
-
-					// Timetag (20 bits): Month(4), Day(5), Hours(5), Minutes(6)
-					U(msg, AIS::KEY_MONTH, start_bit, 4, 0);		// Month 1-12, 0=not available
-					U(msg, AIS::KEY_DAY, start_bit + 4, 5, 0);		// Day 1-31, 0=not available
-					U(msg, AIS::KEY_HOUR, start_bit + 9, 5, 24);	// Hours 0-23, 24=not available
-					U(msg, AIS::KEY_MINUTE, start_bit + 14, 6, 60); // Minutes 0-59, 60=not available
-
-					// Station ID (42 bits): Seven 6-bit ASCII characters
-					T(msg, AIS::KEY_STATION_ID, start_bit + 20, 42, text);
-
-					// Position (49 bits total)
-					SL(msg, AIS::KEY_LON, start_bit + 62, 25, 1 / 60000.0f, 0, 10800000); // Longitude in 1/1000 min, 181°=not available
-					SL(msg, AIS::KEY_LAT, start_bit + 87, 24, 1 / 60000.0f, 0, 5400000);  // Latitude in 1/1000 min, 91°=not available
-
-					// Wind Information Data (33 bits total)
-					UL(msg, AIS::KEY_WIND_SPEED_AVG, start_bit + 111, 10, 0.1f, 0);	 // Average wind speed in knots*10, 1023=not available
-					UL(msg, AIS::KEY_WIND_GUST_SPEED, start_bit + 121, 10, 0.1f, 0); // Wind gust speed in knots*10, 1023=not available
-					U(msg, AIS::KEY_WIND_DIRECTION_AVG, start_bit + 131, 9, 511);	 // Wind direction in degrees, 511=not available
-
-					// Reserved (4 bits) - skip
-					X(msg, AIS::KEY_SPARE, start_bit + 140, 4);
-				}
-			}
-			else if (message_id == 6)
-			{
-				// Water Flow Message - decode first water flow report
-				// Each report is 144 bits, starting at bit 96
-				if (msg.getLength() >= 240)
-				{ // Ensure we have at least one complete report (96 + 144 = 240 bits)
-					int start_bit = 96;
-
-					// Timetag (20 bits): Month(4), Day(5), Hours(5), Minutes(6)
-					U(msg, AIS::KEY_MONTH, start_bit, 4, 0);		// Month 1-12, 0=not available
-					U(msg, AIS::KEY_DAY, start_bit + 4, 5, 0);		// Day 1-31, 0=not available
-					U(msg, AIS::KEY_HOUR, start_bit + 9, 5, 24);	// Hours 0-23, 24=not available
-					U(msg, AIS::KEY_MINUTE, start_bit + 14, 6, 60); // Minutes 0-59, 60=not available
-
-					// Station ID (42 bits): Seven 6-bit ASCII characters
-					T(msg, AIS::KEY_STATION_ID, start_bit + 20, 42, text);
-
-					// Position (49 bits total)
-					SL(msg, AIS::KEY_LON, start_bit + 62, 25, 1 / 60000.0f, 0, 10800000); // Longitude in 1/1000 min, 181°=not available
-					SL(msg, AIS::KEY_LAT, start_bit + 87, 24, 1 / 60000.0f, 0, 5400000);  // Latitude in 1/1000 min, 91°=not available
-
-					// Water Flow Data (33 bits total)
-					U(msg, AIS::KEY_WATER_FLOW, start_bit + 111, 14, 16383); // Water flow in m³/s, 16383=not available
-
-					// Reserved (19 bits) - skip
-					X(msg, AIS::KEY_SPARE, start_bit + 125, 19);
-				}
-			}
-			// Further decoding for other message IDs can be added here
-		}
-		else if ((dac == 316 || dac == 366) && fid == 2)
-		{
-			// Saint Lawrence Seaway Vessel/Lock Scheduling Messages (Addressed)
-			// DAC=316 (Canada) or DAC=366 (US), FI=2
-			// Message ID indicates specific message type:
-			// 1=Lockage Order, 2=Estimated Lock Times
-			U(msg, AIS::KEY_MESSAGE_ID, 90, 6); // Message Identifier (6 bits)
-												// Further decoding based on Message ID can be added here
-		}
-		else if ((dac == 316 || dac == 366) && fid == 32)
-		{
-			// Saint Lawrence Seaway Specific Messages (Addressed)
-			// DAC=316 (Canada) or DAC=366 (US), FI=32
-			// Message ID indicates specific message type:
-			// 1=Version Message
-			U(msg, AIS::KEY_MESSAGE_ID, 90, 6); // Message Identifier (6 bits)
-												// Further decoding based on Message ID can be added here
-		}
-		else
-			D(msg, AIS::KEY_DATA, 88, MIN(920, msg.getLength() - 88), datastring);
+		if (dac == 0 && fid == 0)                              asm_iala_fid0_buoy_monitor(msg, start);
+		else if (dac == 1 && fid == 0)                         asm_imo_fid0_text(msg, start);
+		else if (dac == 1 && fid == 2)                         asm_imo_fid2_interrogation(msg, start);
+		else if (dac == 1 && fid == 3)                         asm_imo_fid3_interrogation_ext(msg, start);
+		else if (dac == 1 && fid == 4)                         asm_imo_fid4_capability_reply(msg, start);
+		else if (dac == 1 && (fid == 16 || fid == 40))         asm_imo_fid16_persons(msg, start);
+		else if (dac == 1 && fid == 30)                        asm_imo_fid30_text_addressed(msg, start);
+		else if (dac == 200 && fid == 55)                      asm_inland_fid55_persons(msg, start);
+		else if ((dac == 235 || dac == 250) && fid == 10)      asm_uk_fid10_aton_monitor(msg, start);
+		else if (dac == 235 && fid == 20)                      asm_uk_fid20_buoy_position(msg, start);
+		else if ((dac == 316 || dac == 366) && fid == 1)       asm_usa_fid1_sls_meteo(msg, start);
+		else if ((dac == 316 || dac == 366) && fid == 2)       asm_usa_fid2_sls_lock(msg, start);
+		else if ((dac == 316 || dac == 366) && fid == 32)      asm_usa_fid32_sls_specific(msg, start);
+		else                                                   D(msg, AIS::KEY_DATA, start, MIN(920, msg.getLength() - start), datastring);
 	}
 
 	void JSONAIS::ProcessMsg8Data(const AIS::Message &msg)
 	{
+		const int start = 56;
 		int dac = msg.getUint(40, 10);
 		int fid = msg.getUint(50, 6);
 
-		if (dac == 1 && fid == 0)
-		{
-			// IALA ASM - Text telegram using 6-bit ASCII (ITU-R M.1371-1)
-			// Broadcast binary message format
-			B(msg, AIS::KEY_ACK_REQUIRED, 56, 1);							 // Acknowledge required flag (1 bit)
-			U(msg, AIS::KEY_TEXT_SEQUENCE, 57, 11);							 // Message sequence number (11 bits)
-			T(msg, AIS::KEY_TEXT, 68, MIN(924, msg.getLength() - 68), text); // Text message (up to 924 bits, 6-bit ASCII)
-		}
-		else if (dac == 1 && fid == 16)
-		{
-			// IALA ASM - VTS targets (targets derived by means other than AIS)
-			// Each VTS target is 120 bits, processing first target only
-			// Note: This conflicts with ITU-R M.1371 "persons on board" message
-			if (msg.getLength() >= 176) // Ensure we have at least 120 bits of target data
-			{
-				U(msg, AIS::KEY_VTS_TARGET_ID_TYPE, 56, 2); // Target identifier type (2 bits)
-
-				// Target ID (42 bits) - format depends on type
-				unsigned id_type = msg.getUint(56, 2);
-				if (id_type == 2)
-				{
-					// Call sign - use text decoding for 6-bit ASCII (7 characters * 6 bits = 42 bits)
-					T(msg, AIS::KEY_VTS_TARGET_ID, 58, 42, text);
-				}
-				else
-				{
-					// MMSI, IMO, or other numeric identifier
-					U(msg, AIS::KEY_VTS_TARGET_ID, 58, 42);
-				}
-
-				X(msg, AIS::KEY_SPARE, 100, 4);								// Spare (4 bits)
-				SL(msg, AIS::KEY_VTS_TARGET_LAT, 104, 24, 1 / 60000.0f, 0); // Latitude (24 bits, 1/1000 min)
-				SL(msg, AIS::KEY_VTS_TARGET_LON, 128, 25, 1 / 60000.0f, 0); // Longitude (25 bits, 1/1000 min)
-				U(msg, AIS::KEY_VTS_TARGET_COG, 153, 9, 360);				// Course over ground (9 bits, 360=not available)
-				U(msg, AIS::KEY_VTS_TARGET_TIMESTAMP, 162, 6, 60);			// UTC second (6 bits, 60=not available)
-				U(msg, AIS::KEY_VTS_TARGET_SOG, 168, 8, 255);				// Speed over ground (8 bits, 255=not available)
-			}
-		}
-		// ECE/TRANS/SC.3/176
-		else if (dac == 200 && fid == 10)
-		{
-			T(msg, AIS::KEY_VIN, 56, 48, text);
-			UL(msg, AIS::KEY_LENGTH, 104, 13, 0.1f, 0);
-			UL(msg, AIS::KEY_BEAM, 117, 10, 0.1f, 0);
-			E(msg, AIS::KEY_SHIPTYPE, 127, 14);
-			E(msg, AIS::KEY_HAZARD, 141, 3);
-			UL(msg, AIS::KEY_DRAUGHT, 144, 11, 0.01f, 0);
-			E(msg, AIS::KEY_LOADED, 155, 2);
-			B(msg, AIS::KEY_SPEED_Q, 157, 1);
-			B(msg, AIS::KEY_COURSE_Q, 158, 1);
-			B(msg, AIS::KEY_HEADING_Q, 159, 1);
-		}
-		else if (dac == 1 && fid == 31)
-		{
-			// Sources: http://vislab-ccom.unh.edu/~schwehr/papers/2010-IMO-SN.1-Circ.289.pdf, GPSDECODE
-			SL(msg, AIS::KEY_LON, 56, 25, 1 / 60000.0f, 0);
-			SL(msg, AIS::KEY_LAT, 81, 24, 1 / 60000.0f, 0);
-			B(msg, AIS::KEY_ACCURACY, 105, 1);
-			U(msg, AIS::KEY_DAY, 106, 5, 0);
-			U(msg, AIS::KEY_HOUR, 111, 5, 24);
-			U(msg, AIS::KEY_MINUTE, 116, 6, 60);
-			U(msg, AIS::KEY_WSPEED, 122, 7, 127);
-			U(msg, AIS::KEY_WGUST, 129, 7, 127);
-			U(msg, AIS::KEY_WDIR, 136, 9, 360);
-			U(msg, AIS::KEY_WGUSTDIR, 145, 9, 360);
-			SL(msg, AIS::KEY_AIRTEMP, 154, 11, 0.1f, 0, -1024);
-			U(msg, AIS::KEY_HUMIDITY, 165, 7, 101);
-			SL(msg, AIS::KEY_DEWPOINT, 172, 10, 0.1f, 0, 501);
-			US(msg, AIS::KEY_PRESSURE, 182, 9, 799, 511);
-			U(msg, AIS::KEY_PRESSURETEND, 191, 2, 3);
-			B(msg, AIS::KEY_VISGREATER, 193, 1);
-			UL(msg, AIS::KEY_VISIBILITY, 194, 7, 0.1f, 0, 127);
-			UL(msg, AIS::KEY_WATERLEVEL, 201, 12, 0.01f, -10, 4001);
-			U(msg, AIS::KEY_LEVELTREND, 213, 2, 3);
-			UL(msg, AIS::KEY_CSPEED, 215, 8, 0.1f, 0, 255);
-			U(msg, AIS::KEY_CDIR, 223, 9, 360);
-			UL(msg, AIS::KEY_CSPEED2, 232, 8, 0.1f, 0, 255);
-			U(msg, AIS::KEY_CDIR2, 240, 9, 360);
-			U(msg, AIS::KEY_CDEPTH2, 249, 5, 31);
-			UL(msg, AIS::KEY_CSPEED3, 254, 8, 0.1f, 0, 255);
-			U(msg, AIS::KEY_CDIR3, 262, 9, 360);
-			U(msg, AIS::KEY_CDEPTH3, 271, 5, 31);
-			UL(msg, AIS::KEY_WAVEHEIGHT, 276, 8, 0.1f, 0, 255);
-			U(msg, AIS::KEY_WAVEPERIOD, 284, 6, 63);
-			U(msg, AIS::KEY_WAVEDIR, 290, 9, 360);
-			UL(msg, AIS::KEY_SWELLHEIGHT, 299, 8, 0.1f, 0, 255);
-			U(msg, AIS::KEY_SWELLPERIOD, 307, 6, 63);
-			U(msg, AIS::KEY_SWELLDIR, 313, 9, 360);
-			U(msg, AIS::KEY_SEASTATE, 322, 4);
-			SL(msg, AIS::KEY_WATERTEMP, 326, 10, 0.1, 0, 501);
-			U(msg, AIS::KEY_PRECIPTYPE, 336, 3, 7);
-			U(msg, AIS::KEY_SALINITY, 339, 9, 510);
-			U(msg, AIS::KEY_ICE, 348, 2, 3);
-		}
-		else if (dac == 1 && fid == 11)
-		{
-			SL(msg, AIS::KEY_LAT, 56, 24, 1 / 60000.0f, 0, 8388607);
-			SL(msg, AIS::KEY_LON, 80, 25, 1 / 60000.0f, 0, 16777215);
-			U(msg, AIS::KEY_DAY, 105, 5, 0);
-			U(msg, AIS::KEY_HOUR, 110, 5, 24);
-			U(msg, AIS::KEY_MINUTE, 115, 6, 60);
-			U(msg, AIS::KEY_WSPEED, 121, 7, 127);
-			U(msg, AIS::KEY_WGUST, 128, 7, 127);
-			U(msg, AIS::KEY_WDIR, 135, 9, 511);
-			U(msg, AIS::KEY_WGUSTDIR, 144, 9, 511);
-			UL(msg, AIS::KEY_AIRTEMP, 153, 11, 0.1f, -60.0f, 2047);
-			U(msg, AIS::KEY_HUMIDITY, 164, 7, 127);
-			UL(msg, AIS::KEY_DEWPOINT, 171, 10, 0.1f, -20.0f, 1023);
-			US(msg, AIS::KEY_PRESSURE, 181, 9, 800, 511);
-			U(msg, AIS::KEY_PRESSURETEND, 190, 2, 3);
-			UL(msg, AIS::KEY_VISIBILITY, 192, 8, 0.1f, 0.0f, 255);
-			UL(msg, AIS::KEY_WATERLEVEL, 200, 9, 0.1f, -10.0f, 511);
-			U(msg, AIS::KEY_LEVELTREND, 209, 2, 3);
-			UL(msg, AIS::KEY_CSPEED, 211, 8, 0.1f, 0.0f, 255);
-			U(msg, AIS::KEY_CDIR, 219, 9, 511);
-			UL(msg, AIS::KEY_CSPEED2, 228, 8, 0.1f, 0.0f, 255);
-			U(msg, AIS::KEY_CDIR2, 236, 9, 511);
-			U(msg, AIS::KEY_CDEPTH2, 245, 5, 31);
-			UL(msg, AIS::KEY_CSPEED3, 250, 8, 0.1f, 0.0f, 255);
-			U(msg, AIS::KEY_CDIR3, 258, 9, 511);
-			U(msg, AIS::KEY_CDEPTH3, 267, 5, 31);
-			UL(msg, AIS::KEY_WAVEHEIGHT, 272, 8, 0.1f, 0.0f, 255);
-			U(msg, AIS::KEY_WAVEPERIOD, 280, 6, 63);
-			U(msg, AIS::KEY_WAVEDIR, 286, 9, 511);
-
-			UL(msg, AIS::KEY_SWELLHEIGHT, 295, 8, 0.1f, 0.0f, 255);
-			U(msg, AIS::KEY_SWELLPERIOD, 303, 6, 63);
-			U(msg, AIS::KEY_SWELLDIR, 309, 9, 511);
-			U(msg, AIS::KEY_SEASTATE, 318, 4, 13);
-			UL(msg, AIS::KEY_WATERTEMP, 322, 10, 0.1f, -10.0f, 1023);
-			U(msg, AIS::KEY_PRECIPTYPE, 332, 3, 7);
-			UL(msg, AIS::KEY_SALINITY, 335, 9, 0.1f, 0.0f, 511);
-			U(msg, AIS::KEY_ICE, 344, 2, 3);
-		}
-		else if ((dac == 316 || dac == 366) && fid == 1)
-		{
-			// Saint Lawrence Seaway Meteorological and Hydrological Messages (Broadcast)
-			// DAC=316 (Canada) or DAC=366 (US), FI=1
-			// Message ID indicates specific message type:
-			// 1=Weather Station, 2=Wind Information, 3=Water Level, 6=Water Flow
-			U(msg, AIS::KEY_MESSAGE_ID, 58, 6); // Message Identifier (6 bits)
-
-			unsigned message_id = msg.getUint(58, 6);
-			if (message_id == 1)
-			{
-				// Weather Station Message - decode first weather report
-				// Each report is 192 bits, starting at bit 64
-				if (msg.getLength() >= 256)
-				{ // Ensure we have at least one complete report (64 + 192 = 256 bits)
-					int start_bit = 64;
-
-					// Timetag (20 bits): Month(4), Day(5), Hours(5), Minutes(6)
-					U(msg, AIS::KEY_MONTH, start_bit, 4, 0);		// Month 1-12, 0=not available
-					U(msg, AIS::KEY_DAY, start_bit + 4, 5, 0);		// Day 1-31, 0=not available
-					U(msg, AIS::KEY_HOUR, start_bit + 9, 5, 24);	// Hours 0-23, 24=not available
-					U(msg, AIS::KEY_MINUTE, start_bit + 14, 6, 60); // Minutes 0-59, 60=not available
-
-					// Station ID (42 bits): Seven 6-bit ASCII characters
-					T(msg, AIS::KEY_STATION_ID, start_bit + 20, 42, text);
-
-					// Position (49 bits total)
-					SL(msg, AIS::KEY_LON, start_bit + 62, 25, 1 / 60000.0f, 0, 10800000); // Longitude in 1/1000 min, 181°=not available
-					SL(msg, AIS::KEY_LAT, start_bit + 87, 24, 1 / 60000.0f, 0, 5400000);  // Latitude in 1/1000 min, 91°=not available
-
-					// Weather Station Data (81 bits total)
-					UL(msg, AIS::KEY_WSPEED, start_bit + 111, 10, 0.1f, 0);				   // Wind speed in knots*10, 1023=not available
-					UL(msg, AIS::KEY_WGUST, start_bit + 121, 10, 0.1f, 0);				   // Wind gust in knots*10, 1023=not available
-					U(msg, AIS::KEY_WDIR, start_bit + 131, 9, 511);						   // Wind direction in degrees, 511=not available
-					U(msg, AIS::KEY_BAROMETRIC_PRESSURE, start_bit + 140, 14, 16383);	   // Atmospheric pressure in 0.1 millibars, 16383=not available
-					SL(msg, AIS::KEY_AIR_TEMPERATURE, start_bit + 154, 10, 0.1f, 0, -512); // Air temperature in °C*10, -512=not available
-					SL(msg, AIS::KEY_DEW_POINT, start_bit + 164, 10, 0.1f, 0, -512);	   // Dew point in °C*10, -512=not available
-					UL(msg, AIS::KEY_VISIBILITY, start_bit + 174, 8, 0.1f, 0);			   // Visibility in km*10, 255=not available
-					SL(msg, AIS::KEY_WATERTEMP, start_bit + 182, 10, 0.1f, 0, -512);	   // Water temperature in °C*10, -512=not available
-				}
-			}
-			else if (message_id == 3)
-			{
-				// Water Level Message - decode first water level report
-				// Each report is 144 bits, starting at bit 64
-				if (msg.getLength() >= 208)
-				{ // Ensure we have at least one complete report (64 + 144 = 208 bits)
-					int start_bit = 64;
-
-					// Timetag (20 bits): Month(4), Day(5), Hours(5), Minutes(6)
-					U(msg, AIS::KEY_MONTH, start_bit, 4, 0);		// Month 1-12, 0=not available
-					U(msg, AIS::KEY_DAY, start_bit + 4, 5, 0);		// Day 1-31, 0=not available
-					U(msg, AIS::KEY_HOUR, start_bit + 9, 5, 24);	// Hours 0-23, 24=not available
-					U(msg, AIS::KEY_MINUTE, start_bit + 14, 6, 60); // Minutes 0-59, 60=not available
-
-					// Station ID (42 bits): Seven 6-bit ASCII characters
-					T(msg, AIS::KEY_STATION_ID, start_bit + 20, 42, text);
-
-					// Position (49 bits total)
-					SL(msg, AIS::KEY_LON, start_bit + 62, 25, 1 / 60000.0f, 0, 10800000); // Longitude in 1/1000 min, 181°=not available
-					SL(msg, AIS::KEY_LAT, start_bit + 87, 24, 1 / 60000.0f, 0, 5400000);  // Latitude in 1/1000 min, 91°=not available
-
-					// Water Level Data (21 bits total)
-					U(msg, AIS::KEY_WATER_LEVEL_TYPE, start_bit + 111, 1);				 // 0=Relative to datum, 1=Water depth
-					SL(msg, AIS::KEY_WATERLEVEL, start_bit + 112, 16, 0.01f, 0, -32768); // Water level in cm, -32768=not available
-					U(msg, AIS::KEY_REFERENCE_DATUM, start_bit + 128, 2);				 // 0=MLLW, 1=IGLD-85, 2,3=reserved
-					U(msg, AIS::KEY_READING_TYPE, start_bit + 130, 2);					 // 0=average, 1=estimated, 2,3=reserved
-
-					// Reserved (12 bits) - skip
-					X(msg, AIS::KEY_SPARE, start_bit + 132, 12);
-				}
-			}
-			else if (message_id == 2)
-			{
-				// Wind Information Message - decode first wind report
-				// Each report is 144 bits, starting at bit 64
-				if (msg.getLength() >= 208)
-				{ // Ensure we have at least one complete report (64 + 144 = 208 bits)
-					int start_bit = 64;
-
-					// Timetag (20 bits): Month(4), Day(5), Hours(5), Minutes(6)
-					U(msg, AIS::KEY_MONTH, start_bit, 4, 0);		// Month 1-12, 0=not available
-					U(msg, AIS::KEY_DAY, start_bit + 4, 5, 0);		// Day 1-31, 0=not available
-					U(msg, AIS::KEY_HOUR, start_bit + 9, 5, 24);	// Hours 0-23, 24=not available
-					U(msg, AIS::KEY_MINUTE, start_bit + 14, 6, 60); // Minutes 0-59, 60=not available
-
-					// Station ID (42 bits): Seven 6-bit ASCII characters
-					T(msg, AIS::KEY_STATION_ID, start_bit + 20, 42, text);
-
-					// Position (49 bits total)
-					SL(msg, AIS::KEY_LON, start_bit + 62, 25, 1 / 60000.0f, 0, 10800000); // Longitude in 1/1000 min, 181°=not available
-					SL(msg, AIS::KEY_LAT, start_bit + 87, 24, 1 / 60000.0f, 0, 5400000);  // Latitude in 1/1000 min, 91°=not available
-
-					// Wind Information Data (33 bits total)
-					UL(msg, AIS::KEY_WIND_SPEED_AVG, start_bit + 111, 10, 0.1f, 0);	 // Average wind speed in knots*10, 1023=not available
-					UL(msg, AIS::KEY_WIND_GUST_SPEED, start_bit + 121, 10, 0.1f, 0); // Wind gust speed in knots*10, 1023=not available
-					U(msg, AIS::KEY_WIND_DIRECTION_AVG, start_bit + 131, 9, 511);	 // Wind direction in degrees, 511=not available
-
-					// Reserved (4 bits) - skip
-					X(msg, AIS::KEY_SPARE, start_bit + 140, 4);
-				}
-			}
-			else if (message_id == 6)
-			{
-				// Water Flow Message - decode first water flow report
-				// Each report is 144 bits, starting at bit 64
-				if (msg.getLength() >= 208)
-				{ // Ensure we have at least one complete report (64 + 144 = 208 bits)
-					int start_bit = 64;
-
-					// Timetag (20 bits): Month(4), Day(5), Hours(5), Minutes(6)
-					U(msg, AIS::KEY_MONTH, start_bit, 4, 0);		// Month 1-12, 0=not available
-					U(msg, AIS::KEY_DAY, start_bit + 4, 5, 0);		// Day 1-31, 0=not available
-					U(msg, AIS::KEY_HOUR, start_bit + 9, 5, 24);	// Hours 0-23, 24=not available
-					U(msg, AIS::KEY_MINUTE, start_bit + 14, 6, 60); // Minutes 0-59, 60=not available
-
-					// Station ID (42 bits): Seven 6-bit ASCII characters
-					T(msg, AIS::KEY_STATION_ID, start_bit + 20, 42, text);
-
-					// Position (49 bits total)
-					SL(msg, AIS::KEY_LON, start_bit + 62, 25, 1 / 60000.0f, 0, 10800000); // Longitude in 1/1000 min, 181°=not available
-					SL(msg, AIS::KEY_LAT, start_bit + 87, 24, 1 / 60000.0f, 0, 5400000);  // Latitude in 1/1000 min, 91°=not available
-
-					// Water Flow Data (33 bits total)
-					U(msg, AIS::KEY_WATER_FLOW, start_bit + 111, 14, 16383); // Water flow in m³/s, 16383=not available
-
-					// Reserved (19 bits) - skip
-					X(msg, AIS::KEY_SPARE, start_bit + 125, 19);
-				}
-			}
-			// Further decoding for other message IDs can be added here
-		}
-		else if ((dac == 316 || dac == 366) && fid == 2)
-		{
-			// Saint Lawrence Seaway Vessel/Lock Scheduling Messages (Broadcast)
-			// DAC=316 (Canada) or DAC=366 (US), FI=2
-			// Message ID indicates specific message type:
-			// 1=Lockage Order, 2=Estimated Lock Times
-			U(msg, AIS::KEY_MESSAGE_ID, 58, 6); // Message Identifier (6 bits)
-												// Further decoding based on Message ID can be added here
-		}
-		else if ((dac == 316 || dac == 366) && fid == 32)
-		{
-			// Saint Lawrence Seaway Specific Messages (Broadcast)
-			// DAC=316 (Canada) or DAC=366 (US), FI=32
-			// Message ID indicates specific message type:
-			// 1=Version Message
-			U(msg, AIS::KEY_MESSAGE_ID, 58, 6); // Message Identifier (6 bits)
-												// Further decoding based on Message ID can be added here
-		}
-		else if (dac == 366 && fid == 1)
-		{
-			// U.S. Coast Guard PAWSS AIS Messages (Broadcast)
-			// DAC=366 (US), FI=1
-			// From Appendix A: Message ID 4=Hydro/Current, 5=Hydro/Salinity Temp, 3=Vessel Procession Order
-			U(msg, AIS::KEY_MESSAGE_ID, 58, 6); // Message Identifier (6 bits)
-		}
-		else if (dac == 367 && fid == 33)
-		{
-			// U.S. Environmental Sensor Report (Broadcast) - DAC=367, FI=33
-			// This message contains repeating sensor reports (112 bits each)
-			// Decode first sensor report only for now
-
-			if (msg.getLength() >= 83)
-			{
-				int report_type = msg.getUint(56, 4);
-
-				// Report Type (4 bits): bits 56-59
-				U(msg, AIS::KEY_REPORT_TYPE, 56, 4);
-
-				// UTC Day (5 bits): bits 60-64
-				U(msg, AIS::KEY_DAY, 60, 5, 0);
-
-				// UTC Hour (5 bits): bits 65-69
-				U(msg, AIS::KEY_HOUR, 65, 5, 24);
-
-				// UTC Minute (6 bits): bits 70-75
-				U(msg, AIS::KEY_MINUTE, 70, 6, 60);
-
-				// Site ID (7 bits): bits 76-82
-				U(msg, AIS::KEY_SITE_ID, 76, 7);
-				// Decode based on report type (if enough bits available)
-				if (report_type == 0 && msg.getLength() >= 168)
-				{
-					// Location Report - starts at bit 83 (bit 56 + 27 bits of header)
-					// Version (6 bits): bits 83-88
-					U(msg, AIS::KEY_VERSION, 83, 6);
-					// Longitude (28 bits): bits 89-116
-					SL(msg, AIS::KEY_LON, 89, 28, 1 / 600000.0f, 0);
-					// Latitude (27 bits): bits 117-143
-					SL(msg, AIS::KEY_LAT, 117, 27, 1 / 600000.0f, 0);
-					// Precision (3 bits): bits 144-146
-					U(msg, AIS::KEY_PRECISION, 144, 3);
-					// Altitude (12 bits, signed): bits 147-158
-					S(msg, AIS::KEY_ALT, 147, 12, -4096);
-				}
-				else if (report_type == 1 && msg.getLength() >= 168)
-				{
-					// Station ID Report
-					// Name (84 bits = 14 characters of 6-bit ASCII): bits 83-166
-					T(msg, AIS::KEY_NAME, 83, 84, text);
-				}
-				else if (report_type == 2 && msg.getLength() >= 168)
-				{
-					// Wind Report (type 2) or Wind with Forecast (type 9)
-					// Average Wind Speed (7 bits) in knots: bits 83-89
-					U(msg, AIS::KEY_WSPEED, 83, 7, 127);
-					// Wind Gust (7 bits) in knots: bits 90-96
-					U(msg, AIS::KEY_WGUST, 90, 7, 127);
-					// Wind Direction (9 bits) in degrees: bits 97-105
-					U(msg, AIS::KEY_WDIR, 97, 9, 360);
-					// Wind Gust Direction (9 bits) in degrees: bits 106-114
-					U(msg, AIS::KEY_WGUSTDIR, 106, 9, 360);
-					// Sensor Data Description (2 bits): bits 116-117
-					// 0=Data unavailable, 1=raw real time, 2=smoothed/averaged, 3=manual input
-					U(msg, AIS::KEY_SENSOR_DESCRIPTION, 116, 2);
-					// Forecast Wind Speed (7 bits) in knots: bits 118-124
-					U(msg, AIS::KEY_FORECAST_WSPEED, 118, 7, 127);
-					// Forecast Gust (7 bits) in knots: bits 125-131
-					U(msg, AIS::KEY_FORECAST_WGUST, 125, 7, 127);
-					// Forecast Direction (9 bits) in degrees: bits 132-140
-					U(msg, AIS::KEY_FORECAST_WDIR, 132, 9, 360);
-					// Valid Day of Forecast (5 bits): bits 141-145
-					U(msg, AIS::KEY_FORECAST_DAY, 141, 5, 0);
-					// Valid Hour of Forecast (5 bits): bits 146-150
-					U(msg, AIS::KEY_FORECAST_HOUR, 146, 5, 24);
-					// Valid Minute of Forecast (6 bits): bits 151-156
-					U(msg, AIS::KEY_FORECAST_MINUTE, 151, 6, 60);
-					// Duration of Forecast (8 bits) in minutes: bits 157-164
-					// 0=Cancel forecast, 1-120=minutes, 121-250=reserved, 251-254=reserved, 255=not available
-					U(msg, AIS::KEY_FORECAST_DURATION, 157, 8, 255);
-					// Spare (3 bits): bits 165-167
-				}
-				else if (report_type == 3 && msg.getLength() >= 168)
-				{
-					// Water Level Report
-					// Water Level Type (1 bit): bit 83
-					U(msg, AIS::KEY_WATER_LEVEL_TYPE, 83, 1);
-					// Water Level (16 bits, signed) in centimeters: bits 84-99
-					SL(msg, AIS::KEY_WATERLEVEL, 84, 16, 0.01f, 0, -32768);
-					// Trend (2 bits): bits 100-101
-					U(msg, AIS::KEY_LEVELTREND, 100, 2);
-					// Reference Datum (5 bits): bits 102-106
-					U(msg, AIS::KEY_REFERENCE_DATUM, 102, 5);
-				}
-			}
-		}
-		else
-			D(msg, AIS::KEY_DATA, 56, MIN(952, msg.getLength() - 56), datastring);
+		if (dac == 1 && fid == 0)                              asm_imo_fid0_text(msg, start);
+		else if (dac == 1 && fid == 16)                        asm_imo_fid16_vts_targets(msg, start);
+		else if (dac == 200 && fid == 10)                      asm_inland_fid10_eri_static(msg, start);
+		else if (dac == 1 && fid == 31)                        asm_imo_fid31_meteo_hydro(msg, start);
+		else if (dac == 200 && fid == 25)                      asm_inland_fid25_bridge_clearance(msg, start);
+		else if (dac == 1 && fid == 21)                        asm_imo_fid21_weather_ship(msg, start);
+		else if (dac == 1 && fid == 29)                        asm_imo_fid29_text_description(msg, start);
+		else if (dac == 1 && fid == 27)                        asm_imo_fid27_route(msg, start);
+		else if (dac == 1 && fid == 26)                        asm_imo_fid26_environmental(msg, start);
+		else if (dac == 1 && fid == 11)                        asm_imo_fid11_meteo_hydro_legacy(msg, start);
+		else if ((dac == 316 || dac == 366) && fid == 1)       asm_usa_fid1_sls_meteo(msg, start);
+		else if ((dac == 316 || dac == 366) && fid == 2)       asm_usa_fid2_sls_lock(msg, start);
+		else if ((dac == 316 || dac == 366) && fid == 32)      asm_usa_fid32_sls_specific(msg, start);
+		else if (dac == 367 && fid == 33)                      asm_usa_fid33_environmental(msg, start);
+		else                                                   D(msg, AIS::KEY_DATA, start, MIN(952, msg.getLength() - start), datastring);
 	}
+
 
 	void JSONAIS::ProcessRadio(const AIS::Message &msg, int start, int len)
 	{
@@ -979,7 +825,7 @@ namespace AIS
 		case 2:
 		case 3:
 		{
-			E(msg, AIS::KEY_STATUS, 38, 4, AIS::KEY_STATUS_TEXT, &JSON_MAP_STATUS);
+			E(msg, AIS::KEY_STATUS, 38, 4, AIS::KEY_STATUS_TEXT);
 			TURN(msg, AIS::KEY_TURN, 42, 8);
 			UL(msg, AIS::KEY_SPEED, 50, 10, 0.1f, 0, 1023);
 			B(msg, AIS::KEY_ACCURACY, 60, 1);
@@ -1007,7 +853,7 @@ namespace AIS
 			B(msg, AIS::KEY_ACCURACY, 78, 1);
 			SL(msg, AIS::KEY_LON, 79, 28, 1 / 600000.0f, 0);
 			SL(msg, AIS::KEY_LAT, 107, 27, 1 / 600000.0f, 0);
-			E(msg, AIS::KEY_EPFD, 134, 4, AIS::KEY_EPFD_TEXT, &JSON_MAP_EPFD);
+			E(msg, AIS::KEY_EPFD, 134, 4, AIS::KEY_EPFD_TEXT);
 			X(msg, AIS::KEY_SPARE, 138, 10);
 			B(msg, AIS::KEY_RAIM, 148, 1);
 
@@ -1018,12 +864,12 @@ namespace AIS
 			U(msg, AIS::KEY_IMO, 40, 30);
 			T(msg, AIS::KEY_CALLSIGN, 70, 42, callsign);
 			T(msg, AIS::KEY_SHIPNAME, 112, 120, shipname);
-			E(msg, AIS::KEY_SHIPTYPE, 232, 8, AIS::KEY_SHIPTYPE_TEXT, &JSON_MAP_SHIPTYPE);
+			E(msg, AIS::KEY_SHIPTYPE, 232, 8, AIS::KEY_SHIPTYPE_TEXT);
 			U(msg, AIS::KEY_TO_BOW, 240, 9);
 			U(msg, AIS::KEY_TO_STERN, 249, 9);
 			U(msg, AIS::KEY_TO_PORT, 258, 6);
 			U(msg, AIS::KEY_TO_STARBOARD, 264, 6);
-			E(msg, AIS::KEY_EPFD, 270, 4, AIS::KEY_EPFD_TEXT, &JSON_MAP_EPFD);
+			E(msg, AIS::KEY_EPFD, 270, 4, AIS::KEY_EPFD_TEXT);
 			ETA(msg, AIS::KEY_ETA, 274, 20, eta);
 			U(msg, AIS::KEY_MONTH, 274, 4, 0);
 			U(msg, AIS::KEY_DAY, 278, 5, 0);
@@ -1147,12 +993,12 @@ namespace AIS
 			UL(msg, AIS::KEY_COURSE, 112, 12, 0.1f, 0);
 			U(msg, AIS::KEY_HEADING, 124, 9);
 			T(msg, AIS::KEY_SHIPNAME, 143, 120, shipname);
-			E(msg, AIS::KEY_SHIPTYPE, 263, 8, AIS::KEY_SHIPTYPE_TEXT, &JSON_MAP_SHIPTYPE);
+			E(msg, AIS::KEY_SHIPTYPE, 263, 8, AIS::KEY_SHIPTYPE_TEXT);
 			U(msg, AIS::KEY_TO_BOW, 271, 9);
 			U(msg, AIS::KEY_TO_STERN, 280, 9);
 			U(msg, AIS::KEY_TO_PORT, 289, 6);
 			U(msg, AIS::KEY_TO_STARBOARD, 295, 6);
-			E(msg, AIS::KEY_EPFD, 301, 4, AIS::KEY_EPFD_TEXT, &JSON_MAP_EPFD);
+			E(msg, AIS::KEY_EPFD, 301, 4, AIS::KEY_EPFD_TEXT);
 			B(msg, AIS::KEY_ACCURACY, 56, 1);
 			U(msg, AIS::KEY_RESERVED, 38, 8);
 			U(msg, AIS::KEY_SECOND, 133, 6);
@@ -1187,7 +1033,7 @@ namespace AIS
 			U(msg, AIS::KEY_INCREMENT4, 149, 11);
 			break;
 		case 21:
-			E(msg, AIS::KEY_AID_TYPE, 38, 5, AIS::KEY_AID_TYPE_TEXT, &JSON_MAP_AID_TYPE);
+			E(msg, AIS::KEY_AID_TYPE, 38, 5, AIS::KEY_AID_TYPE_TEXT);
 			T(msg, AIS::KEY_NAME, 43, 120, name);
 			B(msg, AIS::KEY_ACCURACY, 163, 1);
 			SL(msg, AIS::KEY_LON, 164, 28, 1 / 600000.0f, 0);
@@ -1196,7 +1042,7 @@ namespace AIS
 			U(msg, AIS::KEY_TO_STERN, 228, 9);
 			U(msg, AIS::KEY_TO_PORT, 237, 6);
 			U(msg, AIS::KEY_TO_STARBOARD, 243, 6);
-			E(msg, AIS::KEY_EPFD, 249, 4, AIS::KEY_EPFD_TEXT, &JSON_MAP_EPFD);
+			E(msg, AIS::KEY_EPFD, 249, 4, AIS::KEY_EPFD_TEXT);
 			U(msg, AIS::KEY_SECOND, 253, 6);
 			B(msg, AIS::KEY_OFF_POSITION, 259, 1);
 			U(msg, AIS::KEY_REGIONAL, 260, 8);
@@ -1246,7 +1092,7 @@ namespace AIS
 			}
 			else
 			{
-				E(msg, AIS::KEY_SHIPTYPE, 40, 8, AIS::KEY_SHIPTYPE_TEXT, &JSON_MAP_SHIPTYPE);
+				E(msg, AIS::KEY_SHIPTYPE, 40, 8, AIS::KEY_SHIPTYPE_TEXT);
 				T(msg, AIS::KEY_VENDORID, 48, 18, vendorid);
 				U(msg, AIS::KEY_MODEL, 66, 4);
 				U(msg, AIS::KEY_SERIAL, 70, 20);
@@ -1267,7 +1113,7 @@ namespace AIS
 		case 27:
 			U(msg, AIS::KEY_ACCURACY, 38, 1);
 			U(msg, AIS::KEY_RAIM, 39, 1);
-			E(msg, AIS::KEY_STATUS, 40, 4, AIS::KEY_STATUS_TEXT, &JSON_MAP_STATUS);
+			E(msg, AIS::KEY_STATUS, 40, 4, AIS::KEY_STATUS_TEXT);
 			SL(msg, AIS::KEY_LON, 44, 18, 1 / 600.0f, 0);
 			SL(msg, AIS::KEY_LAT, 62, 17, 1 / 600.0f, 0);
 			U(msg, AIS::KEY_SPEED, 79, 6);
@@ -1279,174 +1125,8 @@ namespace AIS
 		}
 	}
 
-	// Below is a direct translation (more or less) of https://gpsd.gitlab.io/gpsd/AIVDM.html
-
-	const std::vector<std::string> JSON_MAP_STATUS = {
-		"Under way using engine",
-		"At anchor",
-		"Not under command",
-		"Restricted maneuverability",
-		"Constrained by her draught",
-		"Moored",
-		"Aground",
-		"Engaged in fishing",
-		"Under way sailing",
-		"Reserved for HSC",
-		"Reserved for WIG",
-		"Towing astern (regional)",
-		"Pushing ahead or towing alongside (regional)",
-		"Reserved",
-		"AIS-SART is active",
-		"Not defined"};
-
-	const std::vector<std::string> JSON_MAP_EPFD = {
-		"Undefined",
-		"GPS",
-		"GLONASS",
-		"Combined GPS/GLONASS",
-		"Loran-C",
-		"Chayka",
-		"Integrated navigation system",
-		"Surveyed",
-		"Galileo"};
-
-	const std::vector<std::string> JSON_MAP_SHIPTYPE = {
-		"Not available",
-		"Reserved",
-		"Reserved",
-		"Reserved",
-		"Reserved",
-		"Reserved",
-		"Reserved",
-		"Reserved",
-		"Reserved",
-		"Reserved",
-		"Reserved",
-		"Reserved",
-		"Reserved",
-		"Reserved",
-		"Reserved",
-		"Reserved",
-		"Reserved",
-		"Reserved",
-		"Reserved",
-		"Reserved",
-		"Wing in ground (WIG) - all ships of this type",
-		"Wing in ground (WIG) - Hazardous category A",
-		"Wing in ground (WIG) - Hazardous category B",
-		"Wing in ground (WIG) - Hazardous category C",
-		"Wing in ground (WIG) - Hazardous category D",
-		"Wing in ground (WIG) - Reserved",
-		"Wing in ground (WIG) - Reserved",
-		"Wing in ground (WIG) - Reserved",
-		"Wing in ground (WIG) - Reserved",
-		"Wing in ground (WIG) - Reserved",
-		"Fishing",
-		"Towing",
-		"Towing: length exceeds 200m or breadth exceeds 25m",
-		"Dredging or underwater ops",
-		"Diving ops",
-		"Military ops",
-		"Sailing",
-		"Pleasure Craft",
-		"Reserved",
-		"Reserved",
-		"High speed craft (HSC) - all ships of this type",
-		"High speed craft (HSC) - Hazardous category A",
-		"High speed craft (HSC) - Hazardous category B",
-		"High speed craft (HSC) - Hazardous category C",
-		"High speed craft (HSC) - Hazardous category D",
-		"High speed craft (HSC) - Reserved for future use",
-		"High speed craft (HSC) - Reserved for future use",
-		"High speed craft (HSC) - Reserved for future use",
-		"High speed craft (HSC) - Reserved for future use",
-		"High speed craft (HSC) - No additional information",
-		"Pilot Vessel",
-		"Search and Rescue vessel",
-		"Tug",
-		"Port Tender",
-		"Anti-pollution equipment",
-		"Law Enforcement",
-		"Spare - Local Vessel",
-		"Spare - Local Vessel",
-		"Medical Transport",
-		"Noncombatant ship according to RR Resolution No. 18",
-		"Passenger - all ships of this type",
-		"Passenger - Hazardous category A",
-		"Passenger - Hazardous category B",
-		"Passenger - Hazardous category C",
-		"Passenger - Hazardous category D",
-		"Passenger - Reserved for future use",
-		"Passenger - Reserved for future use",
-		"Passenger - Reserved for future use",
-		"Passenger - Reserved for future use",
-		"Passenger - No additional information",
-		"Cargo - all ships of this type",
-		"Cargo - Hazardous category A",
-		"Cargo - Hazardous category B",
-		"Cargo - Hazardous category C",
-		"Cargo - Hazardous category D",
-		"Cargo - Reserved for future use",
-		"Cargo - Reserved for future use",
-		"Cargo - Reserved for future use",
-		"Cargo - Reserved for future use",
-		"Cargo - No additional information",
-		"Tanker - all ships of this type",
-		"Tanker - Hazardous category A",
-		"Tanker - Hazardous category B",
-		"Tanker - Hazardous category C",
-		"Tanker - Hazardous category D",
-		"Tanker - Reserved for future use",
-		"Tanker - Reserved for future use",
-		"Tanker - Reserved for future use",
-		"Tanker - Reserved for future use",
-		"Tanker - No additional information",
-		"Other Type - all ships of this type",
-		"Other Type - Hazardous category A",
-		"Other Type - Hazardous category B",
-		"Other Type - Hazardous category C",
-		"Other Type - Hazardous category D",
-		"Other Type - Reserved for future use",
-		"Other Type - Reserved for future use",
-		"Other Type - Reserved for future use",
-		"Other Type - Reserved for future use",
-		"Other Type - no additional information"};
-
-	const std::vector<std::string> JSON_MAP_AID_TYPE = {
-		"Default, Type of Aid to Navigation not specified",
-		"Reference point",
-		"RACON (radar transponder marking a navigation hazard)",
-		"Fixed offshore structure",
-		"Spare, Reserved for future use.",
-		"Light, without sectors",
-		"Light, with sectors",
-		"Leading Light Front",
-		"Leading Light Rear",
-		"Beacon, Cardinal N",
-		"Beacon, Cardinal E",
-		"Beacon, Cardinal S",
-		"Beacon, Cardinal W",
-		"Beacon, Port hand",
-		"Beacon, Starboard hand",
-		"Beacon, Preferred Channel port hand",
-		"Beacon, Preferred Channel starboard hand",
-		"Beacon, Isolated danger",
-		"Beacon, Safe water",
-		"Beacon, Special mark",
-		"Cardinal Mark N",
-		"Cardinal Mark E",
-		"Cardinal Mark S",
-		"Cardinal Mark W",
-		"Port hand Mark",
-		"Starboard hand Mark",
-		"Preferred Channel Port hand",
-		"Preferred Channel Starboard hand",
-		"Isolated danger",
-		"Safe Water",
-		"Special Mark",
-		"Light Vessel / LANBY / Rigs"};
-
-	// Source: https://help.marinetraffic.com/hc/en-us/articles/360018392858-How-does-MarineTraffic-identify-a-vessel-s-country-and-flag-
+	// Country MID table sourced from:
+	// https://help.marinetraffic.com/hc/en-us/articles/360018392858-How-does-MarineTraffic-identify-a-vessel-s-country-and-flag-
 	// spellchecker:off
 	const std::vector<COUNTRY> JSON_MAP_MID = {
 		{201, "Albania", "AL"},

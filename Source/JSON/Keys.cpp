@@ -47,26 +47,26 @@ namespace AIS
 	}
 
 	const std::vector<std::string> LookupTable_aid_types = {
-		"Default Type of Aid to Navigation not specified",
+		"Default, Type of Aid to Navigation not specified",
 		"Reference point",
 		"RACON (radar transponder marking a navigation hazard)",
 		"Fixed offshore structure",
-		"Spare Reserved for future use.",
-		"Light without sectors",
-		"Light with sectors",
+		"Spare, Reserved for future use.",
+		"Light, without sectors",
+		"Light, with sectors",
 		"Leading Light Front",
 		"Leading Light Rear",
-		"Beacon Cardinal N",
-		"Beacon Cardinal E",
-		"Beacon Cardinal S",
-		"Beacon Cardinal W",
-		"Beacon Port hand",
-		"Beacon Starboard hand",
-		"Beacon Preferred Channel port hand",
-		"Beacon Preferred Channel starboard hand",
-		"Beacon Isolated danger",
-		"Beacon Safe water",
-		"Beacon Special mark",
+		"Beacon, Cardinal N",
+		"Beacon, Cardinal E",
+		"Beacon, Cardinal S",
+		"Beacon, Cardinal W",
+		"Beacon, Port hand",
+		"Beacon, Starboard hand",
+		"Beacon, Preferred Channel port hand",
+		"Beacon, Preferred Channel starboard hand",
+		"Beacon, Isolated danger",
+		"Beacon, Safe water",
+		"Beacon, Special mark",
 		"Cardinal Mark N",
 		"Cardinal Mark E",
 		"Cardinal Mark S",
@@ -304,6 +304,127 @@ namespace AIS
 		"TxA, RxA/RxB",
 		"TxB, RxA/RxB",
 		"Reserved for Future Use",
+	};
+
+	const std::vector<std::string> LookupTable_sync_state = {
+		"UTC direct",
+		"UTC indirect",
+		"Synchronized to a base station",
+		"Synchronized to another station",
+	};
+
+	const std::vector<std::string> LookupTable_racon_status = {
+		"No RACON installed",
+		"RACON installed, not monitored",
+		"RACON operational",
+		"RACON error",
+	};
+
+	const std::vector<std::string> LookupTable_hazard_types = {
+		"Not available (default)",
+		"Blue cones / lights: 1",
+		"Blue cones / lights: 2",
+		"Blue cones / lights: 3",
+		"B-Flag",
+		"Unknown",
+	};
+
+	const std::vector<std::string> LookupTable_loaded_types = {
+		"Not available (default)",
+		"Loaded",
+		"Unloaded",
+		"Reserved",
+	};
+
+	const std::vector<std::string> LookupTable_route_types = {
+		"Undefined (default)",
+		"Mandatory route",
+		"Recommended route",
+		"Alternative route",
+		"Recommended route through ice",
+		"Ship route plan",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Cancel route identified by Message Linkage ID",
+	};
+
+	const std::vector<std::string> LookupTable_sender_classification = {
+		"Ship",
+		"Authority",
+		"Reserved for future use",
+		"Reserved for future use",
+		"Reserved for future use",
+		"Reserved for future use",
+		"Reserved for future use",
+		"Reserved for future use",
+	};
+
+	const std::vector<std::string> LookupTable_pressuretend = {
+		"Steady",
+		"Decreasing",
+		"Increasing",
+		"N/A (default)",
+	};
+
+	const std::vector<std::string> LookupTable_ais_version = {
+		"ITU-R M.1371-1",
+		"Future edition",
+		"Future edition",
+		"Future edition",
+	};
+
+	const std::vector<std::string> LookupTable_vts_target_id_type = {
+		"MMSI",
+		"IMO number",
+		"Call sign",
+		"Other",
+	};
+
+	const std::vector<std::string> LookupTable_health = {
+		"Good",
+		"Alarm",
+	};
+
+	const std::vector<std::string> LookupTable_pressuretend_wmo = {
+		"Increasing, then decreasing; now same or higher than 3 h ago",
+		"Increasing, then steady; or rising, then rising more slowly",
+		"Increasing steadily or unsteadily",
+		"Decreasing or steady, then increasing; or increasing, then increasing more rapidly",
+		"Steady; same as 3 h ago",
+		"Decreasing, then increasing; now same or lower than 3 h ago",
+		"Decreasing, then steady; or decreasing, then decreasing more slowly",
+		"Decreasing steadily or unsteadily",
+		"Steady or increasing, then decreasing; or decreasing, then decreasing more rapidly",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"Reserved",
+		"N/A (default)",
 	};
 
 	// Generated from KeyDefs.h

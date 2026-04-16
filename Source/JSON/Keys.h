@@ -54,6 +54,17 @@ namespace AIS
 	extern const std::vector<std::string> LookupTable_ship_types;
 	extern const std::vector<std::string> LookupTable_station_types;
 	extern const std::vector<std::string> LookupTable_txrx_types;
+	extern const std::vector<std::string> LookupTable_sync_state;
+	extern const std::vector<std::string> LookupTable_racon_status;
+	extern const std::vector<std::string> LookupTable_hazard_types;
+	extern const std::vector<std::string> LookupTable_loaded_types;
+	extern const std::vector<std::string> LookupTable_route_types;
+	extern const std::vector<std::string> LookupTable_sender_classification;
+	extern const std::vector<std::string> LookupTable_pressuretend;
+	extern const std::vector<std::string> LookupTable_pressuretend_wmo;
+	extern const std::vector<std::string> LookupTable_ais_version;
+	extern const std::vector<std::string> LookupTable_vts_target_id_type;
+	extern const std::vector<std::string> LookupTable_health;
 
 	// JSON keys - generated from KeyDefs.h
 	enum Keys
