@@ -150,29 +150,11 @@ endif()
 # Use pkg-config
 find_package(Threads)
 
-# std::atomic<uint64_t> on targets without native 64-bit atomics (e.g. Raspbian
-# armv6 baseline) needs libatomic. Debian armhf (armv7-a) inlines via ldrexd.
 if(NOT MSVC)
-    set(_atomic64_test_src "
-        #include <atomic>
-        #include <cstdint>
-        int main() {
-            std::atomic<uint64_t> x{0};
-            x.fetch_add(1);
-            return static_cast<int>(x.load());
-        }
-    ")
-    check_cxx_source_compiles("${_atomic64_test_src}" HAS_BUILTIN_ATOMIC64)
-    if(NOT HAS_BUILTIN_ATOMIC64)
-        set(CMAKE_REQUIRED_LIBRARIES atomic)
-        check_cxx_source_compiles("${_atomic64_test_src}" HAS_LIBATOMIC_ATOMIC64)
-        unset(CMAKE_REQUIRED_LIBRARIES)
-        if(HAS_LIBATOMIC_ATOMIC64)
-            message(STATUS "ATOMIC: linking with -latomic for 64-bit std::atomic support")
-            list(APPEND ADDITIONAL_LIBRARIES atomic)
-        else()
-            message(WARNING "ATOMIC: std::atomic<uint64_t> not linkable even with -latomic")
-        endif()
+    find_library(ATOMIC_LIB atomic)
+    if(ATOMIC_LIB)
+        message(STATUS "ATOMIC: linking libatomic (${ATOMIC_LIB})")
+        list(APPEND ADDITIONAL_LIBRARIES atomic)
     endif()
 endif()
 
