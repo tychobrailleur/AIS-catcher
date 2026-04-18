@@ -1015,10 +1015,11 @@ namespace AIS
 			Warning() << "AIS: " << msg << " [" << ctx << "]";
 	}
 
-	AISC_COLD_NOINLINE void NMEA::warnJSONControlChar()
+	AISC_COLD_NOINLINE void NMEA::warnJSONControlChar(char c, const std::string &partial)
 	{
 		if (shouldWarn(WARN_JSON_NEWLINE))
-			Warning() << "NMEA: newline in uncompleted JSON input";
+			Warning() << "NMEA: control char 0x" << std::hex << (int)(unsigned char)c << std::dec
+					  << " in uncompleted JSON input [" << partial << "]";
 		reset();
 	}
 
@@ -1051,7 +1052,8 @@ namespace AIS
 			}
 			else if ((unsigned char)c < 0x20)
 			{
-				warnJSONControlChar();
+				line.append(buf + start, pos - 1 - start);
+				warnJSONControlChar(c, line);
 				return;
 			}
 		}

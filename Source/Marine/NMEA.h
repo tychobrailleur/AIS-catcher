@@ -120,7 +120,7 @@ namespace AIS
 		void scanLine(TAG &tag);
 		void scanJSON(TAG &tag);
 		void scanBinary(TAG &tag);
-		void warnJSONControlChar();
+		void warnJSONControlChar(char c, const std::string &partial);
 		void warnAIS(int bit, const char *msg, const std::string &ctx);
 		int own_mmsi = -1;
 
