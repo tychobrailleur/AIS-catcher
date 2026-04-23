@@ -93,8 +93,6 @@ namespace Protocol
 	{
 		state = DISCONNECTED;
 
-		int r;
-
 		struct addrinfo h;
 
 		std::memset(&h, 0, sizeof(h));
@@ -116,8 +114,33 @@ namespace Protocol
 			return false;
 		}
 
-		sock = socket(ai.get()->ai_family, ai.get()->ai_socktype, ai.get()->ai_protocol);
+		for (struct addrinfo *p = ai.get(); p != nullptr; p = p->ai_next)
+		{
+			if (connectAddress(p))
+				return true;
+		}
 
+		if (stats)
+			stats->connect_fail++;
+
+		return persistent;
+	}
+
+	// One connect attempt against a single addrinfo entry.
+	// Returns true if this attempt owns a live socket (READY, or CONNECTING in persistent mode).
+	// Returns false if this address failed — sock is closed and reset to -1 so the caller can try the next.
+	bool TCP::connectAddress(struct addrinfo *p)
+	{
+		auto fail = [this]() -> bool {
+			if (sock != -1)
+			{
+				closesocket(sock);
+				sock = -1;
+			}
+			return false;
+		};
+
+		sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
 		if (sock == -1)
 			return false;
 
@@ -127,13 +150,7 @@ namespace Protocol
 #else
 		if (setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (void *)&yes, sizeof(yes)) == -1)
 #endif
-		{
-			if (stats)
-				stats->connect_fail++;
-
-			disconnect();
-			return false;
-		}
+			return fail();
 
 		if (keep_alive)
 		{
@@ -143,24 +160,11 @@ namespace Protocol
 #else
 			if (setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, (void *)&yes, sizeof(yes)))
 #endif
-			{
-				if (stats)
-					stats->connect_fail++;
-
-				disconnect();
-				return false;
-			}
+				return fail();
 #if defined(__APPLE__)
 			if (setsockopt(sock, IPPROTO_TCP, TCP_KEEPALIVE, &idle, sizeof(idle)))
-			{
-				if (stats)
-					stats->connect_fail++;
-
-				disconnect();
-				return false;
-			}
+				return fail();
 #elif defined(_WIN32)
-			// Windows specific keepalive
 			int interval = 5;
 			struct tcp_keepalive keepalive;
 			keepalive.onoff = 1;
@@ -168,83 +172,69 @@ namespace Protocol
 			keepalive.keepaliveinterval = interval * 1000;
 			DWORD br;
 			if (WSAIoctl(sock, SIO_KEEPALIVE_VALS, &keepalive, sizeof(keepalive), NULL, 0, &br, NULL, NULL) == SOCKET_ERROR)
-			{
-				if (stats)
-					stats->connect_fail++;
-
-				disconnect();
-				return false;
-			}
+				return fail();
 #elif defined(__ANDROID__)
-			// Android uses same config as Linux
 			int interval = 5;
 			int count = 2;
 			if (setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle)) ||
 				setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &interval, sizeof(interval)) ||
 				setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof(count)))
-			{
-				if (stats)
-					stats->connect_fail++;
-
-				disconnect();
-				return false;
-			}
+				return fail();
 #else
 			int interval = 5;
 			int count = 2;
 			if (setsockopt(sock, SOL_TCP, TCP_KEEPIDLE, &idle, sizeof(idle)) ||
 				setsockopt(sock, SOL_TCP, TCP_KEEPINTVL, &interval, sizeof(interval)) ||
 				setsockopt(sock, SOL_TCP, TCP_KEEPCNT, &count, sizeof(count)))
-			{
-				if (stats)
-					stats->connect_fail++;
-
-				disconnect();
-				return false;
-			}
+				return fail();
 #endif
 		}
 
 		if (persistent)
 		{
 #ifndef _WIN32
-			r = fcntl(sock, F_GETFL, 0);
-			if (r == -1)
+			int fl = fcntl(sock, F_GETFL, 0);
+			if (fl == -1)
 			{
-				if (stats)
-					stats->connect_fail++;
-
-				disconnect();
 				Error() << "TCP (" << host << ":" << port << "): fcntl F_GETFL failed: " << strerror(errno);
-				return false;
+				return fail();
 			}
 
-			r = fcntl(sock, F_SETFL, r | O_NONBLOCK);
-			if (r == -1)
+			if (fcntl(sock, F_SETFL, fl | O_NONBLOCK) == -1)
 			{
-				if (stats)
-					stats->connect_fail++;
-
-				disconnect();
 				Error() << "TCP (" << host << ":" << port << "): fcntl F_SETFL failed: " << strerror(errno);
-				return false;
+				return fail();
 			}
 #else
-			u_long mode = 1; // 1 to enable non-blocking socket
+			u_long mode = 1;
 			if (ioctlsocket(sock, FIONBIO, &mode) != 0)
 			{
-				if (stats)
-					stats->connect_fail++;
-
-				disconnect();
 				Error() << "TCP (" << host << ":" << port << "): ioctlsocket failed. Error code: " << WSAGetLastError();
-				return false;
+				return fail();
 			}
+#endif
+		}
+		else if (timeout > 0)
+		{
+			// Non-persistent mode keeps the socket blocking. Cap blocking I/O (and the
+			// synchronous ::connect) via SO_SNDTIMEO / SO_RCVTIMEO so a dead host can't
+			// hang us for the OS default. Best-effort: Windows applies these to connect,
+			// Linux also does for blocking sockets; other POSIX may not.
+#ifdef _WIN32
+			DWORD tv_ms = (DWORD)timeout * 1000;
+			if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char *)&tv_ms, sizeof(tv_ms)) ||
+				setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv_ms, sizeof(tv_ms)))
+				return fail();
+#else
+			struct timeval tv = { timeout, 0 };
+			if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) ||
+				setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)))
+				return fail();
 #endif
 		}
 
 		stamp = time(nullptr);
-		r = ::connect(sock, ai.get()->ai_addr, (int)ai.get()->ai_addrlen);
+		int r = ::connect(sock, p->ai_addr, (int)p->ai_addrlen);
 
 		if (r != -1)
 		{
@@ -267,25 +257,25 @@ namespace Protocol
 		}
 #ifndef _WIN32
 		if (errno != EINPROGRESS)
-		{
-			if (stats)
-				stats->connect_fail++;
-
-			disconnect();
-			return false;
-		}
+			return fail();
 #else
 		if (WSAGetLastError() != WSAEWOULDBLOCK)
-		{
-			if (stats)
-				stats->connect_fail++;
-
-			disconnect();
-			return false;
-		}
+			return fail();
 #endif
 
-		return isConnected(timeout) || persistent;
+		// Non-blocking connect in progress.
+		if (isConnected(timeout))
+			return true;
+
+		// isConnected() may have internally detected async failure and reset sock to -1.
+		// In that case fall through so the caller tries the next address.
+		if (sock == -1)
+			return false;
+
+		if (persistent)
+			return true;
+
+		return fail();
 	}
 
 	bool TCP::isConnected(int t)

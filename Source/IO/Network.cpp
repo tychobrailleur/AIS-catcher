@@ -542,9 +542,10 @@ namespace IO
 
 				if (SendTo((data[i].getNMEA() + "\r\n").c_str()) < 0)
 				{
-					if (!persistent)
+					if (!persistent && !stop_requested)
 					{
 						Error() << "TCP feed: requesting termination.";
+						stop_requested = true;
 						StopRequest();
 					}
 				}
@@ -557,9 +558,10 @@ namespace IO
 
 				if (SendTo((data[i].getJSON() + "\r\n").c_str()) < 0)
 				{
-					if (!persistent)
+					if (!persistent && !stop_requested)
 					{
 						Error() << "TCP feed: requesting termination.";
+						stop_requested = true;
 						StopRequest();
 					}
 				}
@@ -576,9 +578,10 @@ namespace IO
 
 			formatInto(data[i], tag, include_sample_start, uuid, "\r\n");
 
-			if (SendTo(json.data(), (int)json.size()) < 0 && !persistent)
+			if (SendTo(json.data(), (int)json.size()) < 0 && !persistent && !stop_requested)
 			{
 				Error() << "TCP feed: requesting termination.";
+				stop_requested = true;
 				StopRequest();
 			}
 		}
@@ -594,9 +597,10 @@ namespace IO
 				json.clear();
 				builder.stringify(data[i], json, "\r\n");
 				if (SendTo(json.data(), (int)json.size()) < 0)
-					if (!persistent)
+					if (!persistent && !stop_requested)
 					{
 						Critical() << "TCP feed: requesting termination.";
+						stop_requested = true;
 						StopRequest();
 					}
 			}

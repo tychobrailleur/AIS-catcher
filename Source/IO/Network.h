@@ -185,6 +185,7 @@ namespace IO
 		bool persistent = true;
 		std::string uuid;
 		bool include_sample_start = false;
+		bool stop_requested = false;
 
 	public:
 		TCPClientStreamer() : OutputMessage("TCP Client") { fmt = MessageFormat::NMEA; }

@@ -258,7 +258,7 @@ namespace Protocol
 				persistent = Util::Parse::Switch(value);
 				break;
 			case AIS::KEY_SETTING_TIMEOUT:
-				timeout = std::stoi(value);
+				timeout = Util::Parse::Integer(value, 0, 3600);
 				break;
 			case AIS::KEY_SETTING_KEEP_ALIVE:
 				keep_alive = Util::Parse::Switch(value);
@@ -315,6 +315,7 @@ namespace Protocol
 
 		void updateState();
 		bool isConnected(int t);
+		bool connectAddress(struct addrinfo *p);
 
 		bool reconnect()
 		{
