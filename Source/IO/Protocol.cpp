@@ -670,7 +670,11 @@ namespace Protocol
 		else
 		{
 			SOCKET sock = getSocket();
+#ifdef _WIN32
+			if (sock == INVALID_SOCKET)
+#else
 			if (sock < 0)
+#endif
 			{
 				disconnect();
 				return -1;
@@ -1194,6 +1198,17 @@ namespace Protocol
 
 			} while ((buffer[i++] & 128) != 0);
 
+			const int MAX_MQTT_PACKET_SIZE = 1024 * 1024;
+			if (length > MAX_MQTT_PACKET_SIZE)
+			{
+				Error() << "MQTT: Packet size " << length << " exceeds maximum " << MAX_MQTT_PACKET_SIZE;
+				disconnect();
+				return -1;
+			}
+
+			if ((int)buffer.size() < length + i)
+				buffer.resize(length + i);
+
 			if (buffer_ptr < length + i)
 				return 0;
 
@@ -1265,7 +1280,22 @@ namespace Protocol
 				pushVariableLength(2);
 				pushByte(buffer[i]);
 				pushByte(buffer[i + 1]);
-				if (prev->send(packet.data(), packet.size()) != packet.size())
+				if (prev->send(packet.data(), packet.size()) != (int)packet.size())
+					return -1;
+
+				break;
+			case PacketType::PUBREL:
+				if (length < 2)
+				{
+					Error() << "MQTT: PUBREL packet too short";
+					disconnect();
+					return -1;
+				}
+				createPacket(PacketType::PUBCOMP, 0);
+				pushVariableLength(2);
+				pushByte(buffer[i]);
+				pushByte(buffer[i + 1]);
+				if (prev->send(packet.data(), packet.size()) != (int)packet.size())
 					return -1;
 
 				break;
@@ -1406,7 +1436,6 @@ namespace Protocol
 		while (std::getline(resp_stream, line))
 		{
 			std::string lower(line);
-			;
 			Util::Convert::toLower(lower);
 
 			if (lower.find("sec-websocket-accept:") != std::string::npos)
@@ -1425,7 +1454,7 @@ namespace Protocol
 		}
 
 		// Compute the expected accept key
-		std::string expected_accept_key = Util::Convert::BASE64toString(sha1Hash(secWebSocketKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").substr(0, 20).c_str());
+		std::string expected_accept_key = Util::Convert::BASE64toString(sha1Hash(secWebSocketKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"));
 
 		accept_key.erase(std::remove_if(accept_key.begin(), accept_key.end(), ::isspace), accept_key.end());
 		expected_accept_key.erase(std::remove_if(expected_accept_key.begin(), expected_accept_key.end(), ::isspace), expected_accept_key.end());
@@ -1604,7 +1633,7 @@ namespace Protocol
 						buffer[ptr + i] ^= masking_key[i % 4];
 				}
 
-				if (received_ptr + length < received.size() && length < MAX_PACKET_SIZE)
+				if (received_ptr + length <= received.size() && length <= MAX_PACKET_SIZE)
 				{
 					memmove(received.data() + received_ptr, buffer.data() + ptr, length);
 					received_ptr += length;
@@ -1653,14 +1682,7 @@ namespace Protocol
 
 	bool WebSocket::isConnected()
 	{
-
-		if (connected)
-			return true;
-
-		if (prev)
-			connected = prev->isConnected();
-
-		return false;
+		return connected && prev && prev->isConnected();
 	}
 
 	void WebSocket::onDisconnect()
