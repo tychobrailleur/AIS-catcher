@@ -34,37 +34,34 @@ namespace IO
 				std::size_t pos = c.msg.find(EOF_MSG);
 				while (pos != std::string::npos)
 				{
-					// Check if this is a POST request with Content-Length
-					std::size_t content_length = 0;
-					std::size_t cl_pos = c.msg.find("Content-Length:");
-					if (cl_pos == std::string::npos)
-						cl_pos = c.msg.find("content-length:");
+					// Lowercase the header region and find Content-Length anchored to a line start.
+					// The request line is always first, so the header (if present) follows "\r\n".
+					std::string headers(c.msg, 0, pos);
+					Util::Convert::toLower(headers);
 
-					if (cl_pos != std::string::npos && cl_pos < pos)
+					std::size_t content_length = 0;
+					std::size_t cl_pos = headers.find("\r\ncontent-length:");
+					if (cl_pos != std::string::npos)
 					{
-						std::size_t cl_end = c.msg.find("\r\n", cl_pos);
-						if (cl_end != std::string::npos)
+						std::size_t vs = cl_pos + 17;
+						std::size_t ve = c.msg.find("\r\n", vs);
+						std::string cl_value = c.msg.substr(vs, ve - vs);
+						cl_value.erase(0, cl_value.find_first_not_of(" \t"));
+						try
 						{
-							std::string cl_value = c.msg.substr(cl_pos + 15, cl_end - cl_pos - 15);
-							// Trim whitespace
-							cl_value.erase(0, cl_value.find_first_not_of(" \t"));
-							try
+							content_length = std::stoul(cl_value);
+							if (content_length > 1024 * 1024)
 							{
-								content_length = std::stoul(cl_value);
-								// Limit maximum content length to 1MB
-								if (content_length > 1024 * 1024)
-								{
-									Error() << "Server: closing connection, Content-Length too large: " << content_length;
-									c.Close();
-									break;
-								}
-							}
-							catch (...)
-							{
-								Error() << "Server: closing connection, invalid Content-Length: " << cl_value;
+								Error() << "Server: closing connection, Content-Length too large: " << content_length;
 								c.Close();
 								break;
 							}
+						}
+						catch (...)
+						{
+							Error() << "Server: closing connection, invalid Content-Length: " << cl_value;
+							c.Close();
+							break;
 						}
 					}
 
@@ -120,11 +117,16 @@ namespace IO
 		std::istringstream iss(s);
 		std::string line;
 		bool is_post = false;
-		int content_length = 0;
+		std::size_t content_length = 0;
 		std::string url;
 
-		while (std::getline(iss, line) && !line.empty())
+		while (std::getline(iss, line))
 		{
+			if (!line.empty() && line.back() == '\r')
+				line.pop_back();
+			if (line.empty())
+				break;
+
 			std::istringstream line_stream(line);
 			std::string key, value;
 			std::getline(line_stream, key, ' ');
@@ -151,8 +153,8 @@ namespace IO
 				std::getline(line_stream, value);
 				try
 				{
-					content_length = std::stoi(value);
-					if (content_length < 0 || content_length > 1024 * 1024)
+					content_length = std::stoul(value);
+					if (content_length > 1024 * 1024)
 					{
 						content_length = 0;
 					}
@@ -217,7 +219,7 @@ namespace IO
 
 		if (cache)
 		{
-			header += "\r\nCache-Control: max-age=14187, stale-while-revalidate=604800, stale-if-error=604800";
+			header += "\r\nCache-Control: max-age=31536000, stale-while-revalidate=604800, stale-if-error=604800";
 			time_t now = time(0) + 31536000;
 			char buf[100];
 			strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", gmtime(&now));

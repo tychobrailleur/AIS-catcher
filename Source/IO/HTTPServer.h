@@ -73,7 +73,7 @@ class SSEConnection
 			headers += "Content-Type: text/event-stream\r\n";
 			headers += "Cache-Control: no-cache\r\n";
 			headers += "X-Accel-Buffering: no\r\n";
-			headers += "Connection: keep-alive\r\n\r\n\r\n";
+			headers += "Connection: keep-alive\r\n\r\n";
 
 			connection->SendDirect(headers.c_str(), headers.length());
 		}
@@ -88,7 +88,7 @@ class SSEConnection
 
 			if (connection)
 			{
-				connection->SendDirect("\r\n", 1);
+				connection->SendDirect("\r\n", 2);
 				connection->Unlock();
 				connection->Close();
 				connection = nullptr;
@@ -124,6 +124,39 @@ class SSEConnection
 
 		void cleanupSSE()
 		{
+			std::lock_guard<std::mutex> lk(sse_mtx);
+			cleanupSSE_locked();
+		}
+
+		IO::SSEConnection *upgradeSSE(IO::TCPServerConnection &c, int id)
+		{
+			std::lock_guard<std::mutex> lk(sse_mtx);
+			cleanupSSE_locked();
+
+			sse.emplace_back(&c, id);
+			auto &connection = sse.back();
+			connection.Start();
+			return &connection;
+		}
+
+		void sendSSE(int id, const std::string &event, const std::string &data)
+		{
+			std::lock_guard<std::mutex> lk(sse_mtx);
+			for (auto it = sse.begin(); it != sse.end(); ++it)
+			{
+				if (it->getID() == id)
+					it->SendEvent(sse_topic[MIN(id, 3)], data);
+			}
+			cleanupSSE_locked();
+		}
+
+	private:
+		std::string ret, header;
+		std::list<IO::SSEConnection> sse;
+		std::mutex sse_mtx;
+
+		void cleanupSSE_locked()
+		{
 			for (auto it = sse.begin(); it != sse.end();)
 			{
 				if (!it->isConnected())
@@ -137,31 +170,6 @@ class SSEConnection
 				}
 			}
 		}
-
-		IO::SSEConnection *upgradeSSE(IO::TCPServerConnection &c, int id)
-		{
-			cleanupSSE();
-
-			sse.emplace_back(&c, id);
-			auto &connection = sse.back();
-			connection.Start();
-			return &connection;
-		}
-
-		void sendSSE(int id, const std::string &event, const std::string &data)
-		{
-
-			for (auto it = sse.begin(); it != sse.end(); ++it)
-			{
-				if (it->getID() == id)
-					it->SendEvent(sse_topic[MIN(id, 3)], data);
-			}
-			cleanupSSE();
-		}
-
-	private:
-		std::string ret, header;
-		std::list<IO::SSEConnection> sse;
 
 		void Parse(const std::string &s, std::string &get, bool &accept_gzip);
 		void processClients();
