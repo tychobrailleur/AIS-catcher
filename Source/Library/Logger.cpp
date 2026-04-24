@@ -216,7 +216,7 @@ std::vector<LogMessage> Logger::getLastMessages(int n)
 		return result;
 	}
 
-	int ptr = (buffer_position_ + 1 + message_buffer_.size() - n) % message_buffer_.size();
+	int ptr = (buffer_position_ + message_buffer_.size() - n) % message_buffer_.size();
 
 	while (ptr != buffer_position_)
 	{
@@ -257,16 +257,20 @@ void Logger::removeLogListener(int id)
 
 void Logger::notifyListeners(const LogMessage &msg)
 {
+	// Prevent unbounded recursion if a callback itself calls log().
 	thread_local bool in_notify = false;
-
 	if (in_notify) return;
 
-	in_notify = true;
-	std::lock_guard<std::mutex> lock(mutex_);
+	std::vector<LogListener> snapshot;
+	{
+		std::lock_guard<std::mutex> lock(mutex_);
+		snapshot = log_listeners_;
+	}
 
+	in_notify = true;
 	try
 	{
-		for (const auto &listener : log_listeners_)
+		for (const auto &listener : snapshot)
 		{
 			listener.callback(msg);
 		}

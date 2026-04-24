@@ -698,9 +698,16 @@ namespace Protocol
 				int rv = select(sock + 1, &readfds, nullptr, nullptr, &tv);
 				if (rv < 0)
 				{
+#ifdef _WIN32
+					int sock_err = WSAGetLastError();
+					if (sock_err == WSAEINTR)
+						continue;
+					Error() << "TLS select failed. Error code: " << sock_err;
+#else
 					if (errno == EINTR)
 						continue;
-					perror("TLS select");
+					Error() << "TLS select failed: " << strerror(errno);
+#endif
 					if (stats)
 						stats->bytes_in += BIO_number_read(SSL_get_rbio(ssl)) - before;
 
@@ -959,7 +966,7 @@ namespace Protocol
 			if (shift >= 28)
 				return -1;
 
-			if (prev->read((char *)&b, 1) != 1)
+			if (prev->read((char *)&b, 1, 5, true) != 1)
 				return -1;
 
 			length |= (b & 127) << shift;
@@ -1071,7 +1078,8 @@ namespace Protocol
 
 		performHandshake();
 
-		ProtocolBase::onConnect();
+		if (connected)
+			ProtocolBase::onConnect();
 	}
 
 	void MQTT::onDisconnect()
@@ -1210,12 +1218,6 @@ namespace Protocol
 
 			case PacketType::PUBLISH:
 			{
-				if (data_len < length)
-				{
-					Warning() << "MQTT: Buffer too small for incoming message. Required: " << length << ", provided: " << data_len;
-					break;
-				}
-
 				// Validate minimum length for topic length field
 				if (length < 2)
 				{
@@ -1236,15 +1238,22 @@ namespace Protocol
 					return -1;
 				}
 
+				int payload_len = length - header_size;
+				if (data_len < payload_len)
+				{
+					Warning() << "MQTT: Buffer too small for incoming message. Required: " << payload_len << ", provided: " << data_len;
+					break;
+				}
+
 				if (q == 0)
 				{
-					data_returned = length - 2 - topic_len;
+					data_returned = payload_len;
 					memcpy(data, buffer.data() + i + 2 + topic_len, data_returned);
 				}
 				else if (q == 1 || q == 2)
 				{
 					uint16_t packet_id = (buffer[i + 2 + topic_len] << 8) + buffer[i + 2 + topic_len + 1];
-					data_returned = length - 4 - topic_len;
+					data_returned = payload_len;
 					memcpy(data, buffer.data() + i + 4 + topic_len, data_returned);
 
 					createPacket((q == 1) ? PacketType::PUBACK : PacketType::PUBREC, 0);
@@ -1390,16 +1399,51 @@ namespace Protocol
 			return false;
 		}
 
-		// Read the response
-		char response[2048];
-		int len = prev->read(response, sizeof(response), 5, true);
-		if (len <= 0)
+		// Read the response — headers may arrive across multiple TCP segments,
+		// so accumulate until we see the end-of-headers marker.
+		std::string response_str;
+		const size_t MAX_HEADER_SIZE = 16384;
+		const std::string HEADER_END = "\r\n\r\n";
+		size_t header_end_pos = std::string::npos;
+
+		while (response_str.size() < MAX_HEADER_SIZE)
 		{
-			Error() << "WebSocket: No response to handshake request.";
+			char chunk[2048];
+			int len = prev->read(chunk, sizeof(chunk), 5, true);
+			if (len <= 0)
+			{
+				Error() << "WebSocket: No response to handshake request.";
+				return false;
+			}
+
+			// Track scan start so we don't re-scan the entire string each iteration,
+			// while still catching the marker if it straddles two reads.
+			size_t scan_from = response_str.size() >= 3 ? response_str.size() - 3 : 0;
+			response_str.append(chunk, len);
+
+			header_end_pos = response_str.find(HEADER_END, scan_from);
+			if (header_end_pos != std::string::npos)
+				break;
+		}
+
+		if (header_end_pos == std::string::npos)
+		{
+			Error() << "WebSocket: Handshake response headers exceeded " << MAX_HEADER_SIZE << " bytes.";
 			return false;
 		}
 
-		std::string response_str(response, len);
+		// Preserve any frame bytes that arrived after the headers for the frame parser.
+		size_t body_start = header_end_pos + HEADER_END.size();
+		if (body_start < response_str.size())
+		{
+			size_t extra = response_str.size() - body_start;
+			if (extra > buffer.size())
+				buffer.resize(extra);
+			memcpy(buffer.data(), response_str.data() + body_start, extra);
+			buffer_ptr = (int)extra;
+			response_str.resize(body_start);
+		}
+
 		std::string rs_lower(response_str);
 
 		// Parse the response
@@ -1495,17 +1539,20 @@ namespace Protocol
 		}
 		// Generate a random masking key
 		uint8_t masking_key[4];
+		bool key_ok = false;
 #ifdef HASOPENSSL
 		// Use cryptographically secure random from OpenSSL
-		RAND_bytes(masking_key, 4);
-#else
-		// Fallback to std::random_device
-		std::random_device rd;
-		std::mt19937 gen(rd());
-		std::uniform_int_distribution<> dis(0, 255);
-		for (int i = 0; i < 4; ++i)
-			masking_key[i] = dis(gen);
+		key_ok = (RAND_bytes(masking_key, 4) == 1);
 #endif
+		if (!key_ok)
+		{
+			// Fallback to std::random_device (also used when OpenSSL is unavailable)
+			std::random_device rd;
+			std::mt19937 gen(rd());
+			std::uniform_int_distribution<int> dis(0, 255);
+			for (int i = 0; i < 4; ++i)
+				masking_key[i] = (uint8_t)dis(gen);
+		}
 
 		frame.insert(frame.end(), masking_key, masking_key + 4);
 
@@ -1646,10 +1693,40 @@ namespace Protocol
 					break;
 				}
 
+				// Unmask the incoming PING payload before echoing it back
+				if (mask)
+				{
+					for (int i = 0; i < length; ++i)
+						buffer[ptr + i] ^= masking_key[i % 4];
+				}
+
+				// Client-to-server frames must be masked (RFC 6455 §5.3)
+				uint8_t pong_key[4];
+#ifdef HASOPENSSL
+				if (RAND_bytes(pong_key, 4) != 1)
+				{
+					std::random_device rd;
+					std::mt19937 gen(rd());
+					std::uniform_int_distribution<int> dis(0, 255);
+					for (int i = 0; i < 4; ++i)
+						pong_key[i] = (uint8_t)dis(gen);
+				}
+#else
+				{
+					std::random_device rd;
+					std::mt19937 gen(rd());
+					std::uniform_int_distribution<int> dis(0, 255);
+					for (int i = 0; i < 4; ++i)
+						pong_key[i] = (uint8_t)dis(gen);
+				}
+#endif
+
 				frame.resize(0);
 				frame.push_back(0x80 | (uint8_t)OPCODE::PONG);
 				frame.push_back(0x80 | length);
-				frame.insert(frame.end(), buffer.data() + ptr, buffer.data() + ptr + length);
+				frame.insert(frame.end(), pong_key, pong_key + 4);
+				for (int i = 0; i < length; ++i)
+					frame.push_back(buffer[ptr + i] ^ pong_key[i % 4]);
 
 				if (prev->send(frame.data(), frame.size()) != (int)frame.size())
 				{
