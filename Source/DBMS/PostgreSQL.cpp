@@ -55,6 +55,10 @@ namespace IO
 				stats.reconnects++;
 			}
 		}
+		else
+		{
+			stats.connected = 1;
+		}
 
 		std::vector<QueuedEntry> batch;
 		{
@@ -438,7 +442,7 @@ namespace IO
 			run_thread = std::thread(&PostgreSQL::process, this);
 
 			Debug() << "DBMS: start thread, filter: " << Util::Convert::toString(filter.isOn());
-			
+
 			if (filter.isOn())
 				Debug() << ", Allowed: " << filter.getAllowed();
 
