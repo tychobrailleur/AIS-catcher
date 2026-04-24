@@ -120,7 +120,7 @@ namespace IO
 
 		virtual ~OutputMessage() { Stop(); }
 
-		bool setOptionKey(AIS::Keys key, const std::string &arg)
+		virtual bool setOptionKey(AIS::Keys key, const std::string &arg)
 		{
 			switch (key)
 			{
