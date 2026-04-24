@@ -40,7 +40,9 @@ namespace AIS
 			{
 				std::string s(KeyMap[i][JSON_DICT_SETTING].p, KeyMap[i][JSON_DICT_SETTING].n);
 				Util::Convert::toUpper(s);
-				map[s] = (Keys)i;
+				if (!s.empty()) {
+					map[s] = (Keys)i;
+				}
 			}
 		}
 
