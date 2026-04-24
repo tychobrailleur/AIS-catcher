@@ -362,7 +362,7 @@ namespace AIS
 		q++;
 
 		const char *payload_end = end - 5;
-		if (q > payload_end)
+		if (q >= payload_end)
 		{
 			warnAIS(WARN_AIS_PAYLOAD, "empty payload", str);
 			return false;
