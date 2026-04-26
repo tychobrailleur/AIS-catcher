@@ -38,7 +38,6 @@ namespace IO
 
 	class PostgreSQL : public OutputMessage
 	{
-		AIS::Filter filter;
 		int station_id = 0;
 #ifdef HASPSQL
 		int conn_fails = 0;
