@@ -223,6 +223,7 @@ namespace N2K
 		{
 			std::lock_guard<std::mutex> lock(mtx);
 			NMEA2000.SendMsg(N2kMsg);
+			bytes_sent += N2kMsg.DataLen;
 		}
 	}
 

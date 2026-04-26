@@ -35,6 +35,7 @@ namespace IO
 	{
 		if (PQstatus(con) != CONNECTION_OK)
 		{
+			stats.connected = 0;
 			Warning() << "DBMS: Connection to PostgreSQL lost. Attempting to reset...";
 			PQreset(con);
 
@@ -42,12 +43,16 @@ namespace IO
 			{
 				Error() << "DBMS: Could not reset connection. Aborting post.";
 				conn_fails++;
+				stats.connect_fail++;
 				return;
 			}
 			else
 			{
 				Warning() << "DBMS: Connection successfully reset.";
 				conn_fails = 0;
+				stats.connected = 1;
+				stats.connect_ok++;
+				stats.reconnects++;
 			}
 		}
 
@@ -92,7 +97,11 @@ namespace IO
 								   7, nullptr, params, nullptr, nullptr, 0);
 
 				if (PQresultStatus(res) == PGRES_TUPLES_OK && PQntuples(res) > 0)
+				{
 					msg_id = PQgetvalue(res, 0, 0);
+					for (const char *p : params)
+						stats.bytes_out += strlen(p);
+				}
 				else
 				{
 					Error() << "DBMS: ais_message insert failed: " << PQerrorMessage(con);
@@ -121,6 +130,10 @@ namespace IO
 					{
 						Error() << "DBMS: ais_nmea insert failed: " << PQerrorMessage(con);
 						ok = false;
+					}
+					else
+					{
+						stats.bytes_out += nmea.length();
 					}
 					PQclear(res);
 					if (!ok)
@@ -169,8 +182,8 @@ namespace IO
 				}
 			}
 
-			// 4. Vessel upsert
-			if (ok && VD)
+			// 4. Vessel upsert (requires identifiable mmsi)
+			if (ok && VD && entry.mmsi != "0")
 				ok = execVessel(entry, msg_id_ptr);
 
 			// 5. Property inserts
@@ -375,9 +388,14 @@ namespace IO
 		con = PQconnectdb(conn_string.c_str());
 
 		if (con == nullptr || PQstatus(con) != CONNECTION_OK)
+		{
+			stats.connect_fail++;
 			throw std::runtime_error("DBMS: cannot open database :" + std::string(PQerrorMessage(con)));
+		}
 
 		conn_fails = 0;
+		stats.connected = 1;
+		stats.connect_ok++;
 
 		PGresult *res = PQexec(con, "SELECT key_id, key_str FROM ais_keys");
 		if (PQresultStatus(res) != PGRES_TUPLES_OK)

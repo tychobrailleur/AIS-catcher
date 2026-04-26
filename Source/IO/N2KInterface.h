@@ -78,6 +78,7 @@ namespace N2K
 		bool output = false;
 
 		bool connected = false;
+		uint64_t bytes_sent = 0;
 
 		void onOpen();
 		static void onOpenStatic();
@@ -128,6 +129,9 @@ namespace N2K
 		}
 
 		void sendMsg(const tN2kMsg &N2kMsg);
+
+		bool isConnected() const { return connected; }
+		uint64_t getBytesSent() const { return bytes_sent; }
 	};
 
 #else
@@ -136,6 +140,8 @@ namespace N2K
 	public:
 		void Start() {}
 		void Stop() {}
+		bool isConnected() const { return false; }
+		uint64_t getBytesSent() const { return 0; }
 	};
 
 #endif

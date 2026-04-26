@@ -91,6 +91,9 @@ namespace IO
 
 #ifdef HASPSQL
 		void process();
+		using StreamIn<AIS::Message>::Receive;
+		using StreamIn<AIS::GPS>::Receive;
+		using StreamIn<JSON::JSON>::Receive;
 		void Receive(const JSON::JSON *data, int len, TAG &tag);
 #endif
 

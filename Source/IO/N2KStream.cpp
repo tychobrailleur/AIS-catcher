@@ -811,6 +811,12 @@ namespace IO
 			default:
 				break;
 			}
+
+			bool was_connected = stats.connected != 0;
+			stats.connected = N2K::N2KInterface.isConnected() ? 1u : 0u;
+			if (!was_connected && stats.connected)
+				stats.connect_ok++;
+			stats.bytes_out = N2K::N2KInterface.getBytesSent();
 			return;
 		}
 	}
