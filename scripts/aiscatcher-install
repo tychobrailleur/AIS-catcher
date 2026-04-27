@@ -711,7 +711,7 @@ SupplementaryGroups=plugdev dialout"
     fi
 
     service_content+="
-ExecStart=/bin/bash -c '/usr/bin/AIS-catcher -G system on -o 0 -C ${CONFIG_FILE} \$\$(/bin/grep -v \"^#\" ${CMD_FILE} | /bin/grep -v \"^[[:space:]]*\$\$\" | tr -d \"\\r\" | /usr/bin/tr \"\\n\" \" \")'
+ExecStart=/usr/bin/AIS-catcher -G system on -o 0 -C ${CONFIG_FILE} @${CMD_FILE}
 Restart=${restart_policy}
 RestartSec=10
 

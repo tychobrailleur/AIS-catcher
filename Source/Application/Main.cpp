@@ -18,8 +18,10 @@
 #include <signal.h>
 
 #include <iostream>
+#include <fstream>
 #include <string.h>
 #include <memory>
+#include <cctype>
 
 #include "AIS-catcher.h"
 
@@ -218,6 +220,57 @@ static void printBuildConfiguration()
 
 // -------------------------------
 // Command line support functions
+
+
+// Expand @filename response-file arguments (gcc/clang convention).
+// Each line is whitespace-split; lines whose first non-whitespace
+// character is '#' are skipped, as are blank lines. CR endings are
+// stripped. Nested @file is allowed up to a small depth limit.
+static void expandResponseFiles(int argc, char *argv[],
+								std::vector<std::string> &out, int depth = 0)
+{
+	for (int i = 0; i < argc; i++)
+	{
+		const char *s = argv[i];
+		if (!s) continue;
+		if (s[0] != '@')
+		{
+			out.emplace_back(s);
+			continue;
+		}
+		if (depth >= 8)
+			throw std::runtime_error(std::string("Response file recursion too deep: ") + s);
+
+		std::ifstream f(s + 1);
+		if (!f)
+			throw std::runtime_error(std::string("Cannot open response file: ") + (s + 1));
+
+		std::vector<std::string> tokens;
+		std::string line;
+		while (std::getline(f, line))
+		{
+			if (!line.empty() && line.back() == '\r') line.pop_back();
+
+			size_t p = 0;
+			while (p < line.size() && std::isspace((unsigned char)line[p])) p++;
+			if (p >= line.size() || line[p] == '#') continue;
+
+			while (p < line.size())
+			{
+				size_t e = p;
+				while (e < line.size() && !std::isspace((unsigned char)line[e])) e++;
+				tokens.emplace_back(line.substr(p, e - p));
+				p = e;
+				while (p < line.size() && std::isspace((unsigned char)line[p])) p++;
+			}
+		}
+
+		std::vector<char *> tok_argv;
+		tok_argv.reserve(tokens.size());
+		for (auto &t : tokens) tok_argv.push_back(&t[0]);
+		expandResponseFiles((int)tok_argv.size(), tok_argv.data(), out, depth + 1);
+	}
+}
 
 
 static void parseSettings(Setting &s, char *argv[], int ptr, int argc)
@@ -1041,7 +1094,15 @@ int main(int argc, char *argv[])
 
 		state.receivers.back()->getDeviceManager().refreshDevices();
 
-		parseCLI(argc, argv, state, c, cb);
+		std::vector<std::string> expanded;
+		expandResponseFiles(argc, argv, expanded);
+
+		std::vector<char *> argv_expanded;
+		argv_expanded.reserve(expanded.size() + 1);
+		for (auto &s : expanded) argv_expanded.push_back(&s[0]);
+		argv_expanded.push_back(nullptr);
+
+		parseCLI((int)expanded.size(), argv_expanded.data(), state, c, cb);
 
 		if (state.list_devices || state.list_support || state.list_options || state.no_run)
 			return 0;
