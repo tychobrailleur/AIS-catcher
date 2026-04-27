@@ -1866,15 +1866,11 @@ function initMap() {
 
     triggerMapLayer();
 
-    let mapMoving = false;
-
     map.on('movestart', function () {
-        mapMoving = true;
         stopHover();
     });
 
     map.on('moveend', function (evt) {
-        mapMoving = false;
         debouncedSaveSettings();
         debouncedDrawMap();
         if (communityFeed)
@@ -1882,7 +1878,7 @@ function initMap() {
     });
 
     map.on('pointermove', function (evt) {
-        if (evt.dragging || mapMoving) return;
+        if (evt.dragging) return;
         const pixel = map.getEventPixel(evt.originalEvent);
         handlePointerMove(pixel, evt.originalEvent.target);
     });
