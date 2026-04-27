@@ -721,6 +721,19 @@ namespace JSON
 			return *this;
 		}
 
+		// Explicit (ptr, len) overload for runtime-built keys (e.g. snprintf
+		// into a stack buffer). Avoids the KeyRef array ctor, which captures
+		// the declared array size N-1 — correct for literals, wrong for
+		// partially-filled buffers.
+		Writer &key(const char *s, size_t n)
+		{
+			reserve_more(n + 4);
+			put_sep_raw();
+			put_kvkey_raw(s, n);
+			need_sep = false;
+			return *this;
+		}
+
 		// Like val() but for already-serialised JSON fragments. Honors need_sep.
 		Writer &raw_val(const char *raw, size_t rawlen)
 		{

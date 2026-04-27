@@ -376,8 +376,8 @@ std::string DB::getAllPathJSON()
 					break;
 
 				char keybuf[16];
-				snprintf(keybuf, sizeof(keybuf), "%u", ship.mmsi);
-				w.key(keybuf);
+				int n = snprintf(keybuf, sizeof(keybuf), "%u", ship.mmsi);
+				w.key(keybuf, n);
 				writeSinglePathJSONCompact(ptr, w);
 			}
 			ptr = ships[ptr].incoming.next;
@@ -482,8 +482,8 @@ std::string DB::getAllPathJSONSince(std::time_t since)
 			if (ship.mmsi != 0 && hasPathPointsSince(ptr, since))
 			{
 				char keybuf[16];
-				snprintf(keybuf, sizeof(keybuf), "%u", ship.mmsi);
-				w.key(keybuf);
+				int n = snprintf(keybuf, sizeof(keybuf), "%u", ship.mmsi);
+				w.key(keybuf, n);
 				writeSinglePathJSONCompactSince(ptr, since, w);
 			}
 			ptr = ships[ptr].incoming.next;

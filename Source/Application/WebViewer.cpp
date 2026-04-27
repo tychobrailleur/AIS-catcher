@@ -973,8 +973,8 @@ std::string WebViewer::buildMultiPathJSON(ReceiverTracker *s, const std::string 
 			if (mmsi >= 1 && mmsi <= 999999999)
 			{
 				char keybuf[12];
-				snprintf(keybuf, sizeof(keybuf), "%d", mmsi);
-				w.key(keybuf).raw_val(s ? s->getPathJSON(mmsi) : std::string("{}"));
+				int n = snprintf(keybuf, sizeof(keybuf), "%d", mmsi);
+				w.key(keybuf, n).raw_val(s ? s->getPathJSON(mmsi) : std::string("{}"));
 			}
 		}
 		catch (const std::invalid_argument &)
